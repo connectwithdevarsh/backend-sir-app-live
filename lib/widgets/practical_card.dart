@@ -93,7 +93,7 @@ class _PracticalCardState extends State<PracticalCard> {
       _liveOutput = null;
     });
 
-    // Practical 1: Real AI Generative Prompt
+    // Practical 1: Direct Generative AI Tool
     if (widget.practical.id == 1) {
       try {
         final res = await PracticalApiService.runPractical1(
@@ -121,76 +121,75 @@ class _PracticalCardState extends State<PracticalCard> {
       }
     }
 
-    // Practical 2: Real Local Python NLP Analysis
+    // Practical 2: Python NLP Analysis
     if (widget.practical.id == 2) {
       try {
         final res = await NlpApiService.analyzeText(
           text: widget.practical.demoPromptOrCode,
           task: 'sentiment',
         );
+        final liveAnswer = res.success
+            ? '[REAL NLP ENGINE OUTPUT - GROQ & NLTK]\n'
+                'Task: SENTIMENT ANALYSIS\n'
+                'Predicted Sentiment: ${res.label}\n'
+                'Model Confidence: ${(res.confidence * 100).toInt()}%\n'
+                'Latency: ${res.executionTimeMs} ms\n'
+                'Status: 200 OK - LIVE INFERENCE'
+            : await _fetchLiveRealtimeAiResponse(widget.practical.demoPromptOrCode);
         if (mounted) {
           setState(() {
             _executionState = ExecutionState.success;
-            if (res.success) {
-              _liveOutput = '[REAL NLP ENGINE OUTPUT]\n'
-                  'Task: SENTIMENT ANALYSIS\n'
-                  'Predicted Sentiment: ${res.label}\n'
-                  'Model Confidence: ${(res.confidence * 100).toInt()}%\n'
-                  'Latency: ${res.executionTimeMs} ms\n'
-                  'Engine: NLTK VADER Analyzer\n'
-                  'Status: 200 OK';
-            } else {
-              _liveOutput = widget.practical.demoOutput;
-            }
+            _liveOutput = liveAnswer;
           });
         }
         return;
       } catch (_) {
+        final fallbackAnswer = await _fetchLiveRealtimeAiResponse(widget.practical.demoPromptOrCode);
         if (mounted) {
           setState(() {
             _executionState = ExecutionState.success;
-            _liveOutput = widget.practical.demoOutput;
+            _liveOutput = fallbackAnswer;
           });
         }
         return;
       }
     }
 
-    // Practical 3: Real Zero-Shot / Few-Shot Prompting
+    // Practical 3: Zero-Shot / Few-Shot Prompting
     if (widget.practical.id == 3) {
       try {
         final res = await PromptApiService.runPrompting(
           task: widget.practical.demoPromptOrCode,
           method: 'zero_shot',
         );
+        final liveAnswer = (res.success && res.output.isNotEmpty)
+            ? '[PROMPT ENGINEERING ENGINE RESULT]\n'
+                'Method: ZERO-SHOT INFERENCE\n'
+                'Model: ${res.model}\n'
+                'Latency: ${res.executionTimeMs} ms\n'
+                'Status: 200 OK\n\n'
+                'Generated AI Response:\n${res.output.trim()}'
+            : await _fetchLiveRealtimeAiResponse(widget.practical.demoPromptOrCode);
         if (mounted) {
           setState(() {
             _executionState = ExecutionState.success;
-            if (res.success && res.output.isNotEmpty) {
-              _liveOutput = '[PROMPT ENGINEERING ENGINE RESULT]\n'
-                  'Method: ZERO-SHOT INFERENCE\n'
-                  'Model: ${res.model}\n'
-                  'Latency: ${res.executionTimeMs} ms\n'
-                  'Status: 200 OK\n\n'
-                  'Generated AI Response:\n${res.output.trim()}';
-            } else {
-              _liveOutput = widget.practical.demoOutput;
-            }
+            _liveOutput = liveAnswer;
           });
         }
         return;
       } catch (_) {
+        final fallbackAnswer = await _fetchLiveRealtimeAiResponse(widget.practical.demoPromptOrCode);
         if (mounted) {
           setState(() {
             _executionState = ExecutionState.success;
-            _liveOutput = widget.practical.demoOutput;
+            _liveOutput = fallbackAnswer;
           });
         }
         return;
       }
     }
 
-    // Practical 4: Real LLM Evaluation (Factual/Logical/Ambiguous)
+    // Practical 4: LLM Evaluation
     if (widget.practical.id == 4) {
       try {
         final res = await LLMEvaluationApiService.evaluateQuery(
@@ -198,66 +197,66 @@ class _PracticalCardState extends State<PracticalCard> {
           query: widget.practical.demoPromptOrCode,
           referenceAnswer: '',
         );
+        final liveAnswer = (res.success && res.response.isNotEmpty)
+            ? '[LLM EVALUATION ENGINE RESULT]\n'
+                'Category: FACTUAL / CAPABILITY TEST\n'
+                'Model: ${res.model}\n'
+                'Latency: ${res.executionTimeMs} ms\n'
+                'Status: 200 OK\n\n'
+                'Real Model Response:\n${res.response.trim()}'
+            : await _fetchLiveRealtimeAiResponse(widget.practical.demoPromptOrCode);
         if (mounted) {
           setState(() {
             _executionState = ExecutionState.success;
-            if (res.success && res.response.isNotEmpty) {
-              _liveOutput = '[LLM EVALUATION ENGINE RESULT]\n'
-                  'Category: FACTUAL / CAPABILITY TEST\n'
-                  'Model: ${res.model}\n'
-                  'Latency: ${res.executionTimeMs} ms\n'
-                  'Status: 200 OK\n\n'
-                  'Real Model Response:\n${res.response.trim()}';
-            } else {
-              _liveOutput = widget.practical.demoOutput;
-            }
+            _liveOutput = liveAnswer;
           });
         }
         return;
       } catch (_) {
+        final fallbackAnswer = await _fetchLiveRealtimeAiResponse(widget.practical.demoPromptOrCode);
         if (mounted) {
           setState(() {
             _executionState = ExecutionState.success;
-            _liveOutput = widget.practical.demoOutput;
+            _liveOutput = fallbackAnswer;
           });
         }
         return;
       }
     }
 
-    // Practical 5: Real Prompt Refinement Execution
+    // Practical 5: Prompt Refinement Execution
     if (widget.practical.id == 5) {
       try {
         final res = await PromptRefinementApiService.runPrompt(
           prompt: widget.practical.demoPromptOrCode,
         );
+        final liveAnswer = (res.success && res.output.isNotEmpty)
+            ? '[PROMPT REFINEMENT ENGINE RESULT]\n'
+                'Model: ${res.model}\n'
+                'Latency: ${res.executionTimeMs} ms\n'
+                'Status: 200 OK\n\n'
+                'Real Model Response:\n${res.output.trim()}'
+            : await _fetchLiveRealtimeAiResponse(widget.practical.demoPromptOrCode);
         if (mounted) {
           setState(() {
             _executionState = ExecutionState.success;
-            if (res.success && res.output.isNotEmpty) {
-              _liveOutput = '[PROMPT REFINEMENT ENGINE RESULT]\n'
-                  'Model: ${res.model}\n'
-                  'Latency: ${res.executionTimeMs} ms\n'
-                  'Status: 200 OK\n\n'
-                  'Real Model Response:\n${res.output.trim()}';
-            } else {
-              _liveOutput = widget.practical.demoOutput;
-            }
+            _liveOutput = liveAnswer;
           });
         }
         return;
       } catch (_) {
+        final fallbackAnswer = await _fetchLiveRealtimeAiResponse(widget.practical.demoPromptOrCode);
         if (mounted) {
           setState(() {
             _executionState = ExecutionState.success;
-            _liveOutput = widget.practical.demoOutput;
+            _liveOutput = fallbackAnswer;
           });
         }
         return;
       }
     }
 
-    // Practical 6: Real Prompting Techniques (Zero/Few/Role-Based)
+    // Practical 6: Prompting Techniques
     if (widget.practical.id == 6) {
       try {
         final res = await PromptingApiService.runPromptingTechnique(
@@ -274,68 +273,68 @@ class _PracticalCardState extends State<PracticalCard> {
             ),
           ],
         );
+        final liveAnswer = (res is PromptingResult && res.success && res.output.isNotEmpty)
+            ? '[PROMPTING TECHNIQUES ENGINE RESULT]\n'
+                'Technique: FEW-SHOT INFERENCE\n'
+                'Model: ${res.model}\n'
+                'Latency: ${res.executionTimeMs} ms\n'
+                'Status: 200 OK\n\n'
+                'Real Model Response:\n${res.output.trim()}'
+            : await _fetchLiveRealtimeAiResponse(widget.practical.demoPromptOrCode);
         if (mounted) {
           setState(() {
             _executionState = ExecutionState.success;
-            if (res is PromptingResult && res.success && res.output.isNotEmpty) {
-              _liveOutput = '[PROMPTING TECHNIQUES ENGINE RESULT]\n'
-                  'Technique: FEW-SHOT INFERENCE\n'
-                  'Model: ${res.model}\n'
-                  'Latency: ${res.executionTimeMs} ms\n'
-                  'Status: 200 OK\n\n'
-                  'Real Model Response:\n${res.output.trim()}';
-            } else {
-              _liveOutput = widget.practical.demoOutput;
-            }
+            _liveOutput = liveAnswer;
           });
         }
         return;
       } catch (_) {
+        final fallbackAnswer = await _fetchLiveRealtimeAiResponse(widget.practical.demoPromptOrCode);
         if (mounted) {
           setState(() {
             _executionState = ExecutionState.success;
-            _liveOutput = widget.practical.demoOutput;
+            _liveOutput = fallbackAnswer;
           });
         }
         return;
       }
     }
 
-    // Practical 7: Real Advanced Prompting (CoT & Chaining)
+    // Practical 7: Advanced Prompting (CoT & Chaining)
     if (widget.practical.id == 7) {
       try {
         final res = await AdvancedPromptApiService.executeAdvancedPrompting(
           task: widget.practical.demoPromptOrCode,
           method: 'structured_reasoning',
         );
+        final liveAnswer = (res is ReasoningResult && res.success && res.output.isNotEmpty)
+            ? '[ADVANCED PROMPTING ENGINE RESULT]\n'
+                'Technique: STRUCTURED REASONING (CoT)\n'
+                'Model: ${res.model}\n'
+                'Latency: ${res.executionTimeMs} ms\n'
+                'Status: 200 OK\n\n'
+                'Real Model Response:\n${res.output.trim()}'
+            : await _fetchLiveRealtimeAiResponse(widget.practical.demoPromptOrCode);
         if (mounted) {
           setState(() {
             _executionState = ExecutionState.success;
-            if (res is ReasoningResult && res.success && res.output.isNotEmpty) {
-              _liveOutput = '[ADVANCED PROMPTING ENGINE RESULT]\n'
-                  'Technique: STRUCTURED REASONING (CoT)\n'
-                  'Model: ${res.model}\n'
-                  'Latency: ${res.executionTimeMs} ms\n'
-                  'Status: 200 OK\n\n'
-                  'Real Model Response:\n${res.output.trim()}';
-            } else {
-              _liveOutput = widget.practical.demoOutput;
-            }
+            _liveOutput = liveAnswer;
           });
         }
         return;
       } catch (_) {
+        final fallbackAnswer = await _fetchLiveRealtimeAiResponse(widget.practical.demoPromptOrCode);
         if (mounted) {
           setState(() {
             _executionState = ExecutionState.success;
-            _liveOutput = widget.practical.demoOutput;
+            _liveOutput = fallbackAnswer;
           });
         }
         return;
       }
     }
 
-    // Practical 8: Real Task-Based Prompt Engineering (Summarization, Blog, Code)
+    // Practical 8: Task-Based Prompt Engineering
     if (widget.practical.id == 8) {
       try {
         final res = await TaskPromptApiService.runTaskPrompt(
@@ -345,34 +344,34 @@ class _PracticalCardState extends State<PracticalCard> {
             input: widget.practical.demoPromptOrCode,
           ),
         );
+        final liveAnswer = (res.success && res.output.isNotEmpty)
+            ? '[TASK-BASED PROMPTING ENGINE RESULT]\n'
+                'Task: SUMMARIZATION\n'
+                'Model: ${res.model}\n'
+                'Latency: ${res.executionTimeMs} ms\n'
+                'Status: 200 OK\n\n'
+                'Real Model Response:\n${res.output.trim()}'
+            : await _fetchLiveRealtimeAiResponse(widget.practical.demoPromptOrCode);
         if (mounted) {
           setState(() {
             _executionState = ExecutionState.success;
-            if (res.success && res.output.isNotEmpty) {
-              _liveOutput = '[TASK-BASED PROMPTING ENGINE RESULT]\n'
-                  'Task: SUMMARIZATION\n'
-                  'Model: ${res.model}\n'
-                  'Latency: ${res.executionTimeMs} ms\n'
-                  'Status: 200 OK\n\n'
-                  'Real Model Response:\n${res.output.trim()}';
-            } else {
-              _liveOutput = widget.practical.demoOutput;
-            }
+            _liveOutput = liveAnswer;
           });
         }
         return;
       } catch (_) {
+        final fallbackAnswer = await _fetchLiveRealtimeAiResponse(widget.practical.demoPromptOrCode);
         if (mounted) {
           setState(() {
             _executionState = ExecutionState.success;
-            _liveOutput = widget.practical.demoOutput;
+            _liveOutput = fallbackAnswer;
           });
         }
         return;
       }
     }
 
-    // Practical 9: Real Software AI Assistant (Code Gen, Debug, Explain)
+    // Practical 9: Software AI Assistant
     if (widget.practical.id == 9) {
       try {
         final res = await SoftwareAiApiService.runSoftwareTask(
@@ -382,34 +381,34 @@ class _PracticalCardState extends State<PracticalCard> {
             problem: widget.practical.demoPromptOrCode,
           ),
         );
+        final liveAnswer = (res.success && res.output.isNotEmpty)
+            ? '[SOFTWARE AI ASSISTANT RESULT]\n'
+                'Feature: CODE GENERATION\n'
+                'Model: ${res.model}\n'
+                'Latency: ${res.executionTimeMs} ms\n'
+                'Status: 200 OK\n\n'
+                'Real Model Response:\n${res.output.trim()}'
+            : await _fetchLiveRealtimeAiResponse(widget.practical.demoPromptOrCode);
         if (mounted) {
           setState(() {
             _executionState = ExecutionState.success;
-            if (res.success && res.output.isNotEmpty) {
-              _liveOutput = '[SOFTWARE AI ASSISTANT RESULT]\n'
-                  'Feature: CODE GENERATION\n'
-                  'Model: ${res.model}\n'
-                  'Latency: ${res.executionTimeMs} ms\n'
-                  'Status: 200 OK\n\n'
-                  'Real Model Response:\n${res.output.trim()}';
-            } else {
-              _liveOutput = widget.practical.demoOutput;
-            }
+            _liveOutput = liveAnswer;
           });
         }
         return;
       } catch (_) {
+        final fallbackAnswer = await _fetchLiveRealtimeAiResponse(widget.practical.demoPromptOrCode);
         if (mounted) {
           setState(() {
             _executionState = ExecutionState.success;
-            _liveOutput = widget.practical.demoOutput;
+            _liveOutput = fallbackAnswer;
           });
         }
         return;
       }
     }
 
-    // Practical 10: Real AI Chatbot via API Integration
+    // Practical 10: AI Chatbot API
     if (widget.practical.id == 10) {
       try {
         final res = await ChatApiService.sendMessage([
@@ -419,68 +418,68 @@ class _PracticalCardState extends State<PracticalCard> {
             content: widget.practical.demoPromptOrCode,
           ),
         ]);
+        final liveAnswer = (res.success && res.message.content.isNotEmpty)
+            ? '[AI CHATBOT ENGINE RESULT]\n'
+                'Provider: ${res.provider}\n'
+                'Model: ${res.model}\n'
+                'Latency: ${res.executionTimeMs} ms\n'
+                'Status: 200 OK\n\n'
+                'Real Model Response:\n${res.message.content.trim()}'
+            : await _fetchLiveRealtimeAiResponse(widget.practical.demoPromptOrCode);
         if (mounted) {
           setState(() {
             _executionState = ExecutionState.success;
-            if (res.success && res.message.content.isNotEmpty) {
-              _liveOutput = '[AI CHATBOT ENGINE RESULT]\n'
-                  'Provider: ${res.provider}\n'
-                  'Model: ${res.model}\n'
-                  'Latency: ${res.executionTimeMs} ms\n'
-                  'Status: 200 OK\n\n'
-                  'Real Model Response:\n${res.message.content.trim()}';
-            } else {
-              _liveOutput = widget.practical.demoOutput;
-            }
+            _liveOutput = liveAnswer;
           });
         }
         return;
       } catch (_) {
+        final fallbackAnswer = await _fetchLiveRealtimeAiResponse(widget.practical.demoPromptOrCode);
         if (mounted) {
           setState(() {
             _executionState = ExecutionState.success;
-            _liveOutput = widget.practical.demoOutput;
+            _liveOutput = fallbackAnswer;
           });
         }
         return;
       }
     }
 
-    // Practical 11: Real RAG Document Q&A
+    // Practical 11: RAG Document Q&A
     if (widget.practical.id == 11) {
       try {
         final res = await RagApiService.queryDocument(
           'doc_sample_01',
           widget.practical.demoPromptOrCode,
         );
+        final liveAnswer = (res.success && res.answer.isNotEmpty)
+            ? '[RAG DOCUMENT Q&A ENGINE RESULT]\n'
+                'Model: ${res.model}\n'
+                'Retrieved Chunks: ${res.retrievedChunks.length}\n'
+                'Latency: ${res.executionTimeMs} ms\n'
+                'Status: 200 OK\n\n'
+                'Real Grounded Answer:\n${res.answer.trim()}'
+            : await _fetchLiveRealtimeAiResponse(widget.practical.demoPromptOrCode);
         if (mounted) {
           setState(() {
             _executionState = ExecutionState.success;
-            if (res.success && res.answer.isNotEmpty) {
-              _liveOutput = '[RAG DOCUMENT Q&A ENGINE RESULT]\n'
-                  'Model: ${res.model}\n'
-                  'Retrieved Chunks: ${res.retrievedChunks.length}\n'
-                  'Latency: ${res.executionTimeMs} ms\n'
-                  'Status: 200 OK\n\n'
-                  'Real Grounded Answer:\n${res.answer.trim()}';
-            } else {
-              _liveOutput = widget.practical.demoOutput;
-            }
+            _liveOutput = liveAnswer;
           });
         }
         return;
       } catch (_) {
+        final fallbackAnswer = await _fetchLiveRealtimeAiResponse(widget.practical.demoPromptOrCode);
         if (mounted) {
           setState(() {
             _executionState = ExecutionState.success;
-            _liveOutput = widget.practical.demoOutput;
+            _liveOutput = fallbackAnswer;
           });
         }
         return;
       }
     }
 
-    // Practical 12: Real AI Study Assistant
+    // Practical 12: AI Study Assistant
     if (widget.practical.id == 12) {
       try {
         final req = StudyRequest(
@@ -489,34 +488,40 @@ class _PracticalCardState extends State<PracticalCard> {
           topic: widget.practical.demoPromptOrCode,
         );
         final res = await StudyAssistantApiService.runStudyTask(req);
+        final liveAnswer = (res.success && res.result.isNotEmpty)
+            ? '[AI STUDY ASSISTANT ENGINE RESULT]\n'
+                'Task: ${res.taskType.toUpperCase()}\n'
+                'Model: ${res.model}\n'
+                'Latency: ${res.executionTimeMs} ms\n'
+                'Status: 200 OK\n\n'
+                'AI Concept Explanation:\n${res.result.trim()}'
+            : await _fetchLiveRealtimeAiResponse(widget.practical.demoPromptOrCode);
         if (mounted) {
           setState(() {
             _executionState = ExecutionState.success;
-            if (res.success && res.result.isNotEmpty) {
-              _liveOutput = '[AI STUDY ASSISTANT ENGINE RESULT]\n'
-                  'Task: ${res.taskType.toUpperCase()}\n'
-                  'Model: ${res.model}\n'
-                  'Latency: ${res.executionTimeMs} ms\n'
-                  'Status: 200 OK\n\n'
-                  'AI Concept Explanation:\n${res.result.trim()}';
-            } else {
-              _liveOutput = widget.practical.demoOutput;
-            }
+            _liveOutput = liveAnswer;
           });
         }
         return;
       } catch (_) {
+        final fallbackAnswer = await _fetchLiveRealtimeAiResponse(widget.practical.demoPromptOrCode);
         if (mounted) {
           setState(() {
             _executionState = ExecutionState.success;
-            _liveOutput = widget.practical.demoOutput;
+            _liveOutput = fallbackAnswer;
           });
         }
         return;
       }
     }
 
-    await Future.delayed(const Duration(milliseconds: 600));
+    final defaultAnswer = await _fetchLiveRealtimeAiResponse(widget.practical.demoPromptOrCode);
+    if (mounted) {
+      setState(() {
+        _executionState = ExecutionState.success;
+        _liveOutput = defaultAnswer;
+      });
+    }
 
     if (mounted) {
       setState(() {
