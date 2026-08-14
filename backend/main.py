@@ -1,8 +1,15 @@
 import os
+import sys
 import time
 import uuid
 from datetime import datetime
 from typing import List, Dict, Optional
+
+# Ensure backend path is registered for Vercel imports
+_backend_dir = os.path.dirname(os.path.abspath(__file__))
+if _backend_dir not in sys.path:
+    sys.path.insert(0, _backend_dir)
+
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
