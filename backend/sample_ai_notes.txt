@@ -1,0 +1,21 @@
+AIPE LAB - ARTIFICIAL INTELLIGENCE & PROMPT ENGINEERING NOTES
+Subject Code: DI05016011 | Diploma IT 5th Semester | GTU Syllabus
+
+1. INTRODUCTION TO ARTIFICIAL INTELLIGENCE
+Artificial Intelligence (AI) is a branch of computer science devoted to creating computing systems capable of performing cognitive tasks that traditionally require human intelligence. These tasks include learning from experience, logical reasoning, automated problem-solving, natural language processing, and visual perception.
+
+2. MACHINE LEARNING & DEEP LEARNING
+Machine Learning (ML) is a subset of Artificial Intelligence that enables algorithms to automatically learn patterns from data and improve decision accuracy without being explicitly programmed. Deep Learning (DL) utilizes multi-layer artificial neural networks inspired by biological brain structures to process unstructured inputs such as images, audio, and large text datasets.
+
+3. GENERATIVE AI & LARGE LANGUAGE MODELS (LLMs)
+Generative AI refers to algorithms designed to create new, original content including text, images, computer code, audio, and video. Large Language Models (LLMs) like GPT-4 and Llama-3 are trained on massive text corpora to predict probabilistic sequences of words, enabling conversational capabilities, code generation, summarization, and translation.
+
+4. PROMPT ENGINEERING TECHNIQUES
+Prompt Engineering is the practice of structuring, refining, and optimizing natural language inputs provided to LLM models to achieve precise, reliable outputs. Essential techniques include:
+- Zero-Shot Prompting: Querying the model without providing example demonstrations.
+- Few-Shot Prompting: Supplying input-output examples inside the prompt context.
+- Chain-of-Thought (CoT): Directing the model to produce step-by-step reasoning steps before rendering its final conclusion.
+- Role-Based Prompting: Instructing the model to adopt a specific professional persona (e.g., senior software architect or diploma IT instructor).
+
+5. RETRIEVAL-AUGMENTED GENERATION (RAG)
+Retrieval-Augmented Generation (RAG) is an architectural framework that enhances LLM accuracy by retrieving relevant factual information from external document vector indices and injecting those retrieved text chunks into the model prompt context. RAG prevents model hallucination, ensures answer grounding, and allows question answering over private domain documents.
