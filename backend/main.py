@@ -203,7 +203,7 @@ def run_practical_2(request: NLPRequest):
     
     task = request.task.lower()
     if task == "sentiment":
-        return NLPService.analyze_sentiment(input_text)
+        return NLPService.analyze_text(input_text, task="sentiment")
     elif task in ["classification", "classify"]:
         return NLPService.classify_text(input_text)
     else:
