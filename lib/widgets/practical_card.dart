@@ -522,13 +522,6 @@ class _PracticalCardState extends State<PracticalCard> {
         _liveOutput = defaultAnswer;
       });
     }
-
-    if (mounted) {
-      setState(() {
-        _executionState = ExecutionState.success;
-        _liveOutput = widget.practical.demoOutput;
-      });
-    }
   }
 
   void _resetDemo() {
