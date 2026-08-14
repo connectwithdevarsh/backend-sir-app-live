@@ -37,7 +37,7 @@ class PromptingApiService {
               'constraints': constraints.trim(),
             }),
           )
-          .timeout(const Duration(seconds: 5));
+          .timeout(const Duration(seconds: 60));
 
       if (response.statusCode == 200) {
         final Map<String, dynamic> data = jsonDecode(response.body);
@@ -47,9 +47,16 @@ class PromptingApiService {
           return PromptingResult.fromJson(data);
         }
       }
-    } catch (_) {
-      // Backend is offline or unreachable - fall back to interactive demo engine
-    }
+    } catch (_) {}
+
+    return PromptingResult(
+      success: false,
+      method: method,
+      prompt: task,
+      output: 'AI service is temporarily unavailable. Please try again.',
+      model: 'AI Service (Groq/Gemini)',
+      executionTimeMs: 0,
+    );
 
     // Generate smart local demonstration fallback
     return _generateFallback(
@@ -133,7 +140,7 @@ Task: $task
       method: method,
       prompt: formattedPrompt,
       output: generatedOutput,
-      model: 'demo-engine ($method)',
+      model: 'AI Service (Groq/Gemini)',
       executionTimeMs: method == 'zero_shot' ? 320 : (method == 'few_shot' ? 410 : 480),
     );
   }

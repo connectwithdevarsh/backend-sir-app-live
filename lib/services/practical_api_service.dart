@@ -20,26 +20,19 @@ class PracticalApiService {
               'prompt': prompt.trim(),
             }),
           )
-          .timeout(const Duration(seconds: 45));
+          .timeout(const Duration(seconds: 60));
 
       if (response.statusCode == 200) {
         final Map<String, dynamic> data = jsonDecode(response.body);
         return PracticalResult.fromJson(data);
       } else {
-        String serverError = 'HTTP ${response.statusCode}';
-        try {
-          final errBody = jsonDecode(response.body);
-          if (errBody is Map && errBody.containsKey('detail')) {
-            serverError = errBody['detail'].toString();
-          }
-        } catch (_) {}
         return PracticalResult.error(
-          'Unable to connect to AI backend service ($serverError). Please ensure backend is running.',
+          'AI service is temporarily unavailable. Please try again.',
         );
       }
     } catch (e) {
       return PracticalResult.error(
-        'Unable to connect to AI backend service at ${AppConfig.baseUrl}. Please start backend server with: python -m uvicorn main:app --reload --port 8000',
+        'AI service is temporarily unavailable. Please try again.',
       );
     }
   }

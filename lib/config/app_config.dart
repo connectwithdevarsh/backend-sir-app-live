@@ -21,3 +21,11 @@ class AppConfig {
     return 'https://backend-sir-app-live.onrender.com';
   }
 }
+
+/// Centralized API configuration for production backend access.
+class ApiConfig {
+  ApiConfig._();
+
+  /// Production 24/7 Render backend base URL
+  static String get baseUrl => AppConfig.baseUrl;
+}

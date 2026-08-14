@@ -28,32 +28,17 @@ class PromptApiService {
               'examples': examples.map((e) => e.toJson()).toList(),
             }),
           )
-          .timeout(const Duration(seconds: 45));
+          .timeout(const Duration(seconds: 60));
 
       if (response.statusCode == 200) {
         final Map<String, dynamic> data = jsonDecode(response.body);
         return PromptResult.fromJson(data);
       } else {
-        String serverError = 'HTTP ${response.statusCode}';
-        try {
-          final errBody = jsonDecode(response.body);
-          if (errBody is Map && errBody.containsKey('detail')) {
-            serverError = errBody['detail'].toString();
-          }
-        } catch (_) {}
-        return PromptResult.error('Prompt engine error: $serverError');
+        return PromptResult.error('AI service is temporarily unavailable. Please try again.');
       }
-    } on SocketException {
+    } catch (_) {
       return PromptResult.error(
-        'Backend unavailable. Please ensure the Python backend server is running at ${AppConfig.baseUrl}.',
-      );
-    } on http.ClientException {
-      return PromptResult.error(
-        'Unable to connect to AI backend service. Please check network connection.',
-      );
-    } on Exception catch (e) {
-      return PromptResult.error(
-        'Prompt execution failed: ${e.toString().replaceAll('Exception:', '').trim()}',
+        'AI service is temporarily unavailable. Please try again.',
       );
     }
   }

@@ -20,7 +20,7 @@ class TaskPromptApiService {
             },
             body: jsonEncode(request.toJson()),
           )
-          .timeout(const Duration(seconds: 40));
+          .timeout(const Duration(seconds: 60));
 
       if (response.statusCode == 200) {
         final Map<String, dynamic> data = jsonDecode(response.body);
@@ -124,13 +124,13 @@ Explanation:
     }
 
     return TaskPromptResult(
-      success: true,
+      success: false,
       taskType: req.taskType,
       promptType: req.promptType,
       prompt: req.prompt.isNotEmpty ? req.prompt : "Built-in ${req.promptType} prompt",
-      output: output,
-      model: 'demo-engine (task-prompt)',
-      executionTimeMs: isOpt ? 580 : 320,
+      output: 'AI service is temporarily unavailable. Please try again.',
+      model: 'AI Service (Groq/Gemini)',
+      executionTimeMs: 0,
     );
   }
 }

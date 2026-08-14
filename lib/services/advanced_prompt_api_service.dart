@@ -31,7 +31,7 @@ class AdvancedPromptApiService {
               'steps': steps.map((s) => s.toJson()).toList(),
             }),
           )
-          .timeout(const Duration(seconds: 40));
+          .timeout(const Duration(seconds: 60));
 
       if (response.statusCode == 200) {
         final Map<String, dynamic> data = jsonDecode(response.body);
@@ -43,28 +43,25 @@ class AdvancedPromptApiService {
         } else {
           return AdvancedPromptCompareResult.fromJson(data);
         }
-      } else {
-        String serverError = 'HTTP ${response.statusCode}';
-        try {
-          final errBody = jsonDecode(response.body);
-          if (errBody is Map && errBody.containsKey('detail')) {
-            serverError = errBody['detail'].toString();
-          }
-        } catch (_) {}
-
-        if (cleanMethod == 'structured_reasoning') {
-          return ReasoningResult.failure('Backend error: $serverError', prompt: cleanTask);
-        } else if (cleanMethod == 'prompt_chaining') {
-          return ChainResult.failure('Backend error: $serverError', task: cleanTask);
-        } else {
-          return _generateFallback(cleanTask, cleanMethod, steps);
-        }
+        return ReasoningResult(
+          success: false,
+          prompt: cleanTask,
+          method: cleanMethod,
+          output: 'AI service is temporarily unavailable. Please try again.',
+          model: 'AI Service (Groq/Gemini)',
+          executionTimeMs: 0,
+        );
       }
     } catch (_) {
-      // If server is offline, fall back to interactive demo engine
+      return ReasoningResult(
+        success: false,
+        prompt: cleanTask,
+        method: cleanMethod,
+        output: 'AI service is temporarily unavailable. Please try again.',
+        model: 'AI Service (Groq/Gemini)',
+        executionTimeMs: 0,
+      );
     }
-
-    return _generateFallback(cleanTask, cleanMethod, steps);
   }
 
   static dynamic _generateFallback(String task, String method, List<ChainStep> steps) {
@@ -167,7 +164,7 @@ Multi-step problem processed successfully through structured reasoning steps.
       method: 'structured_reasoning',
       prompt: prompt,
       output: output.trim(),
-      model: 'demo-engine (structured)',
+      model: 'AI Service (Groq/Gemini)',
       executionTimeMs: 450,
     );
   }
@@ -232,7 +229,7 @@ Multi-step problem processed successfully through structured reasoning steps.
           name: s.name,
           prompt: interpolatedPrompt,
           output: stepOutput,
-          model: 'demo-engine (chain-step)',
+          model: 'AI Service (Groq/Gemini)',
           executionTimeMs: timeMs,
           success: true,
         ),
@@ -244,7 +241,7 @@ Multi-step problem processed successfully through structured reasoning steps.
       task: task,
       steps: resultItems,
       totalExecutionTimeMs: totalTime,
-      model: 'demo-engine (prompt-chain)',
+      model: 'AI Service (Groq/Gemini)',
       finalOutput: previousOutput,
     );
   }

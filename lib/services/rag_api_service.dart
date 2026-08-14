@@ -195,14 +195,14 @@ USER QUESTION:
 $question""";
 
     return RagResponse(
-      success: true,
+      success: false,
       question: question,
-      answer: answer,
+      answer: 'AI service is temporarily unavailable. Please try again.',
       sources: sources,
       retrievedChunks: chunks,
       prompt: prompt,
-      model: 'demo-engine (rag-pipeline)',
-      executionTimeMs: 520,
+      model: 'AI Service (Groq/Gemini)',
+      executionTimeMs: 0,
     );
   }
 }

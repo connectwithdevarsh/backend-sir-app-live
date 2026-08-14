@@ -23,7 +23,7 @@ class PromptRefinementApiService {
               'prompt': prompt.trim(),
             }),
           )
-          .timeout(const Duration(seconds: 15));
+          .timeout(const Duration(seconds: 60));
 
       if (response.statusCode == 200) {
         final Map<String, dynamic> data = jsonDecode(response.body);
@@ -32,12 +32,11 @@ class PromptRefinementApiService {
     } catch (_) {}
 
     return PromptExecutionResult(
-      success: true,
+      success: false,
       prompt: prompt,
-      output:
-          'Generative AI models leverage Transformer neural network architectures to predict probabilistic sequences of tokens, producing natural language text, computer code, and creative media.',
-      model: 'demo-engine (refinement)',
-      executionTimeMs: 290,
+      output: 'AI service is temporarily unavailable. Please try again.',
+      model: 'AI Service (Groq/Gemini)',
+      executionTimeMs: 0,
     );
   }
 }

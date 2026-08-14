@@ -30,7 +30,7 @@ class ChatApiService {
     try {
       final response = await http
           .get(url, headers: {'Accept': 'application/json'})
-          .timeout(const Duration(seconds: 5));
+          .timeout(const Duration(seconds: 15));
 
       if (response.statusCode == 200) {
         return jsonDecode(response.body);
@@ -61,7 +61,7 @@ class ChatApiService {
             },
             body: jsonEncode(payload),
           )
-          .timeout(const Duration(seconds: 35));
+          .timeout(const Duration(seconds: 60));
 
       if (response.statusCode == 200) {
         final Map<String, dynamic> data = jsonDecode(response.body);
@@ -92,43 +92,16 @@ class ChatApiService {
   }
 
   static ChatApiResponse _generateFallback(List<ChatMessage> messages) {
-    final lastMsg = messages.isNotEmpty ? messages.last.content.toLowerCase() : '';
-    String responseText = '';
-
-    if (lastMsg.contains('artificial intelligence') || lastMsg.contains('what is ai')) {
-      responseText =
-          "Artificial Intelligence (AI) is a branch of computer science focused on building smart machines capable of performing tasks that typically require human intelligence, such as learning, reasoning, problem solving, and language understanding.";
-    } else if (lastMsg.contains('machine learning') || lastMsg.contains('ml')) {
-      responseText =
-          "Machine Learning (ML) is a subset of AI that enables systems to automatically learn and improve from experience without being explicitly programmed.";
-    } else if (lastMsg.contains('python') || lastMsg.contains('function')) {
-      responseText = """In Python, functions are defined using the `def` keyword. Here is a simple example:
-
-```python
-def greet_student(name):
-    return f"Hello {name}, welcome to AIPE LAB!"
-
-print(greet_student("Diploma Student"))
-```
-Functions promote code reusability and modular design.""";
-    } else if (lastMsg.contains('application') || lastMsg.contains('example')) {
-      responseText =
-          "Two popular real-world applications of AI include:\n1. **Virtual Assistants**: Siri, Google Assistant, and ChatGPT for automated assistance.\n2. **Recommendation Systems**: Personalized suggestions on Netflix, YouTube, and Amazon.";
-    } else {
-      responseText =
-          "I am your AIPE LAB AI Assistant! I can help you understand Artificial Intelligence concepts, prompt engineering techniques, and Python code examples. What would you like to learn today?";
-    }
-
     return ChatApiResponse(
-      success: true,
+      success: false,
       message: ChatMessage(
         id: DateTime.now().millisecondsSinceEpoch.toString(),
         role: 'assistant',
-        content: responseText,
+        content: 'AI service is temporarily unavailable. Please try again.',
       ),
-      model: 'demo-engine (chatbot)',
+      model: 'AI Service (Groq/Gemini)',
       provider: 'groq/gemini',
-      executionTimeMs: 480,
+      executionTimeMs: 0,
     );
   }
 }
