@@ -46,6 +46,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.get("/")
+@app.get("/api/health")
+def health_check():
+    return {
+        "status": "online",
+        "service": "AIPE LAB Backend Service",
+        "subject": "Artificial Intelligence with Prompt Engineering (DI05016011)",
+        "timestamp": datetime.now().isoformat()
+    }
+
 class PracticalRequest(BaseModel):
     prompt: str
 

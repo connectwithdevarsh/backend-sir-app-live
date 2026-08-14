@@ -1,15 +1,16 @@
 import re
 import time
-import nltk
-from nltk.sentiment.vader import SentimentIntensityAnalyzer
-from nltk.classify import NaiveBayesClassifier
-from nltk.probability import DictionaryProbDist
 
-# Ensure VADER lexicon is downloaded
+# Robust import for serverless deployment (Vercel)
 try:
-    nltk.download('vader_lexicon', quiet=True)
+    import nltk
+    try:
+        nltk.download('vader_lexicon', quiet=True)
+    except Exception:
+        pass
+    from nltk.sentiment.vader import SentimentIntensityAnalyzer
 except Exception:
-    pass
+    SentimentIntensityAnalyzer = None
 
 class NLPService:
     _vader_analyzer = None
@@ -29,69 +30,62 @@ class NLPService:
 
     @classmethod
     def _get_vader(cls):
-        if cls._vader_analyzer is None:
-            cls._vader_analyzer = SentimentIntensityAnalyzer()
+        if cls._vader_analyzer is None and SentimentIntensityAnalyzer is not None:
+            try:
+                cls._vader_analyzer = SentimentIntensityAnalyzer()
+            except Exception:
+                cls._vader_analyzer = None
         return cls._vader_analyzer
 
     @classmethod
-    def _get_classifier(cls):
-        if cls._classifier is None:
-            training_corpus = [
-                # Technology & AI
-                ("artificial intelligence machine learning deep learning neural networks algorithms python code computer vision robotics cloud software hardware programming database", "Technology & AI"),
-                ("flutter mobile application web development backend fastapi api server architecture computing microservices", "Technology & AI"),
-                ("data science natural language processing llm prompt engineering transformer gpu linux operating system", "Technology & AI"),
-                ("cybersecurity network encryption authentication protocols microprocessor processor circuits", "Technology & AI"),
-                
-                # Education & Academics
-                ("diploma engineering students attending classroom lectures studying syllabus practical experiments university college", "Education & Academics"),
-                ("semester examinations grades professor curriculum textbooks study materials assignments learning education", "Education & Academics"),
-                ("academic research laboratory degree tuition tutoring courses lecture notes viva question paper", "Education & Academics"),
-                ("students preparing project submission practical manual engineering faculty teachers institute", "Education & Academics"),
-                
-                # Business & Finance
-                ("quarterly earnings revenue growth market share stock investment financial portfolio corporate strategy profit", "Business & Finance"),
-                ("profit margins balance sheet dividend payout hedge fund capital banking investment accounting enterprise", "Business & Finance"),
-                ("venture capital startup valuation economic forecast trade commercial enterprise marketing sales budget", "Business & Finance"),
-                ("business monetary policy fiscal inflation market economy commerce assets valuation shares", "Business & Finance"),
-                
-                # Healthcare & Medicine
-                ("hospital clinic doctor physician patient diagnosis medical prescription treatment disease surgery", "Healthcare & Medicine"),
-                ("cardiology pharmacology clinical trials symptoms therapy healthcare nursing blood test vital signs", "Healthcare & Medicine"),
-                ("laboratory pathology scanner pharmacy emergency ambulance wellness medicine health doctor care", "Healthcare & Medicine"),
-                ("medical records infection virus vaccine health hospital treatment recovery patient clinic", "Healthcare & Medicine"),
-                
-                # Customer Support & Services
-                ("order delivery shipping package tracking refund return policy product warranty exchange client support", "Customer Support & Services"),
-                ("customer service representative helpdesk ticket inquiry damaged item complaint assistance courier", "Customer Support & Services"),
-                ("payment failure billing issue transaction disputed subscription cancellation technical help desk", "Customer Support & Services"),
-                ("client feedback customer satisfaction online store order status package arrival dispatch support", "Customer Support & Services")
-            ]
-
-            feature_sets = [(cls._extract_features(text), label) for text, label in training_corpus]
-            cls._classifier = NaiveBayesClassifier.train(feature_sets)
-
-        return cls._classifier
-
-    @classmethod
-    def analyze_sentiment(cls, text: str) -> dict:
+    def analyze_text(cls, text: str, task: str = "sentiment") -> dict:
         start_time = time.time()
         vader = cls._get_vader()
         
-        scores = vader.polarity_scores(text)
-        compound = scores['compound']
-        pos = scores['pos']
-        neg = scores['neg']
-        neu = scores['neu']
+        pos, neg, neu, compound = 0.0, 0.0, 1.0, 0.0
+        label = "NEUTRAL"
 
-        if compound >= 0.05:
-            label = "POSITIVE"
+        if vader is not None:
+            try:
+                scores = vader.polarity_scores(text)
+                compound = scores['compound']
+                pos = scores['pos']
+                neg = scores['neg']
+                neu = scores['neu']
+                if compound >= 0.05:
+                    label = "POSITIVE"
+                elif compound <= -0.05:
+                    label = "NEGATIVE"
+                else:
+                    label = "NEUTRAL"
+            except Exception:
+                vader = None
+
+        if vader is None:
+            # Fallback dictionary-based sentiment scoring for serverless environments
+            pos_words = {'good', 'great', 'excellent', 'fantastic', 'amazing', 'happy', 'love', 'best', 'positive', 'wonderful', 'nice', 'awesome', 'smart'}
+            neg_words = {'bad', 'terrible', 'horrible', 'poor', 'worst', 'hate', 'negative', 'wrong', 'fail', 'error', 'broken', 'slow', 'bugs'}
+            words = set(re.findall(r'\b[a-zA-Z]{2,}\b', text.lower()))
+            pos_count = len(words & pos_words)
+            neg_count = len(words & neg_words)
+            if pos_count > neg_count:
+                label = "POSITIVE"
+                compound = 0.65
+                pos, neg, neu = 0.6, 0.1, 0.3
+            elif neg_count > pos_count:
+                label = "NEGATIVE"
+                compound = -0.65
+                pos, neg, neu = 0.1, 0.6, 0.3
+            else:
+                label = "NEUTRAL"
+                compound = 0.0
+                pos, neg, neu = 0.1, 0.1, 0.8
+
+        if label == "POSITIVE":
             raw_conf = 0.55 + (compound * 0.40) + (pos * 0.05)
-        elif compound <= -0.05:
-            label = "NEGATIVE"
+        elif label == "NEGATIVE":
             raw_conf = 0.55 + (abs(compound) * 0.40) + (neg * 0.05)
         else:
-            label = "NEUTRAL"
             raw_conf = 0.52 + (neu * 0.38)
 
         confidence = round(min(max(raw_conf, 0.52), 0.99), 2)
@@ -114,29 +108,35 @@ class NLPService:
     @classmethod
     def classify_text(cls, text: str) -> dict:
         start_time = time.time()
-        clf = cls._get_classifier()
-        features = cls._extract_features(text)
         
-        prob_dist = clf.prob_classify(features)
-        predicted_label = prob_dist.max()
-        confidence = round(float(prob_dist.prob(predicted_label)), 2)
-        confidence = min(max(confidence, 0.65), 0.98)
-
-        elapsed_ms = max(int((time.time() - start_time) * 1000), 2)
-
-        distribution = {
-            c: round(float(prob_dist.prob(c)), 3)
-            for c in cls._supported_classes
+        # Rule-based zero-dependency text classification for serverless
+        lower_text = text.lower()
+        scores = {c: 0.1 for c in cls._supported_classes}
+        
+        keywords = {
+            "Technology & AI": ["ai", "python", "code", "model", "algorithm", "data", "software", "hardware", "app", "flutter", "fastapi", "computer", "network", "system", "llm"],
+            "Education & Academics": ["student", "college", "university", "study", "exam", "syllabus", "practical", "lecture", "degree", "homework", "engineering", "academic"],
+            "Business & Finance": ["money", "profit", "market", "stock", "company", "bank", "revenue", "sales", "business", "price", "invest", "finance"],
+            "Healthcare & Medicine": ["doctor", "health", "hospital", "patient", "medicine", "disease", "treatment", "clinic", "care", "medical"],
+            "Customer Support & Services": ["support", "service", "help", "order", "refund", "ticket", "issue", "customer", "contact", "agent"]
         }
+
+        for cat, kw_list in keywords.items():
+            for kw in kw_list:
+                if kw in lower_text:
+                    scores[cat] += 0.25
+
+        predicted_class = max(scores, key=scores.get)
+        max_score = scores[predicted_class]
+        total_score = sum(scores.values())
+        confidence = round(min(max_score / total_score, 0.99), 2)
+        elapsed_ms = max(int((time.time() - start_time) * 1000), 2)
 
         return {
             "success": True,
             "task": "classification",
-            "label": predicted_label,
+            "predictedCategory": predicted_class,
             "confidence": confidence,
             "executionTimeMs": elapsed_ms,
-            "details": {
-                "supportedClasses": cls._supported_classes,
-                "probabilities": distribution
-            }
+            "allCategories": {cat: round(score / total_score, 2) for cat, score in scores.items()}
         }
