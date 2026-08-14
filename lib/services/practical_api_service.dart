@@ -27,12 +27,12 @@ class PracticalApiService {
         return PracticalResult.fromJson(data);
       } else {
         return PracticalResult.error(
-          'AI service is temporarily unavailable. Please try again.',
+          'API Error (HTTP ${response.statusCode}): ${response.body}',
         );
       }
     } catch (e) {
       return PracticalResult.error(
-        'AI service is temporarily unavailable. Please try again.',
+        'Connection Error: Unable to reach AI service ($e). Please check internet connection.',
       );
     }
   }

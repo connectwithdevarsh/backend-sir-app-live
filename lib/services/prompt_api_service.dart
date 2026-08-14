@@ -33,11 +33,11 @@ class PromptApiService {
         final Map<String, dynamic> data = jsonDecode(response.body);
         return PromptResult.fromJson(data);
       } else {
-        return PromptResult.error('AI service is temporarily unavailable. Please try again.');
+        return PromptResult.error('API Error (HTTP ${response.statusCode}): ${response.body}');
       }
-    } catch (_) {
+    } catch (e) {
       return PromptResult.error(
-        'AI service is temporarily unavailable. Please try again.',
+        'Connection Error: Unable to reach AI service ($e). Please check internet connection.',
       );
     }
   }
