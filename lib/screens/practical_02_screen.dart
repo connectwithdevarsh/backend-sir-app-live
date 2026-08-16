@@ -101,7 +101,7 @@ class _Practical02ScreenState extends State<Practical02Screen>
     final text = 'Task: ${_result!.task.toUpperCase()}\n'
         'Input: "${_textController.text.trim()}"\n'
         'Result: ${_result!.label}\n'
-        'Confidence: ${(_result!.confidence * 100).toInt()}%\n'
+        'Analysis: ${_result!.explanation}\n'
         'Latency: ${_result!.executionTimeMs} ms';
     Clipboard.setData(ClipboardData(text: text));
     _showSnackBar('Result copied to clipboard.');

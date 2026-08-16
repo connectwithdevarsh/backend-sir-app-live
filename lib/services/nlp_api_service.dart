@@ -3,46 +3,78 @@ import 'package:http/http.dart' as http;
 import '../config/app_config.dart';
 import '../models/nlp_result.dart';
 
-/// NlpApiService manages backend communication for real NLP sentiment analysis and text classification.
+/// NlpApiService manages API communication with live Render backend
+/// for Practical 02 NLP Sentiment Analysis and Text Classification,
+/// and handles silent app startup backend warm-up.
 class NlpApiService {
+  static bool _hasWarmedUp = false;
+
+  /// Silently sends a background warm-up request to wake the Render backend on app launch.
+  static Future<void> warmupBackend() async {
+    if (_hasWarmedUp) return;
+    _hasWarmedUp = true;
+
+    final Uri url = Uri.parse('${AppConfig.baseUrl}/api/health');
+    try {
+      // Background non-blocking warm-up call
+      await http.get(url, headers: {'Accept': 'application/json'}).timeout(
+        const Duration(seconds: 15),
+      );
+    } catch (_) {
+      // Warm-up failure is silent and non-blocking
+    }
+  }
+
+  /// Sends NLP Sentiment or Classification request to live Render backend with real latency timing and retry logic.
   static Future<NlpResult> analyzeText({
     required String text,
     required String task,
   }) async {
     final Uri url = Uri.parse('${AppConfig.baseUrl}/api/practical/2/analyze');
+    final startTime = DateTime.now();
 
-    try {
-      final response = await http
-          .post(
-            url,
-            headers: {
-              'Content-Type': 'application/json',
-              'Accept': 'application/json',
-            },
-            body: jsonEncode({
-              'text': text.trim(),
-              'task': task.toLowerCase(),
-            }),
-          )
-          .timeout(const Duration(seconds: 60));
+    const maxAttempts = 2;
+    for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        final response = await http
+            .post(
+              url,
+              headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+              },
+              body: jsonEncode({
+                'text': text.trim(),
+                'task': task.toLowerCase().trim(),
+              }),
+            )
+            .timeout(const Duration(seconds: 60));
 
-      if (response.statusCode == 200) {
-        final Map<String, dynamic> data = jsonDecode(response.body);
-        return NlpResult.fromJson(data);
+        final latencyMs = DateTime.now().difference(startTime).inMilliseconds;
+
+        if (response.statusCode == 200) {
+          final Map<String, dynamic> data = jsonDecode(response.body);
+          return NlpResult.fromJson(data, latencyMs: latencyMs);
+        } else if (response.statusCode >= 500 && attempt < maxAttempts) {
+          // Retry once on server 5xx cold start error
+          await Future.delayed(const Duration(milliseconds: 1500));
+          continue;
+        } else {
+          return NlpResult.error(
+            'API Error (HTTP ${response.statusCode}): ${response.body}',
+          );
+        }
+      } catch (e) {
+        if (attempt < maxAttempts) {
+          await Future.delayed(const Duration(milliseconds: 1500));
+          continue;
+        }
+        return NlpResult.error(
+          'Connection Error: Unable to reach AI service ($e). Please check internet connection.',
+        );
       }
-    } catch (_) {}
+    }
 
-    final isSentiment = task.toLowerCase() == 'sentiment';
-
-    return NlpResult(
-      success: true,
-      task: task,
-      label: isSentiment ? 'POSITIVE' : 'TECHNOLOGY',
-      confidence: 0.942,
-      executionTimeMs: 180,
-      details: isSentiment
-          ? {'positive': 0.942, 'neutral': 0.048, 'negative': 0.010}
-          : {'Technology': 0.942, 'Education': 0.038, 'Business': 0.020},
-    );
+    return NlpResult.error('AI service temporarily unavailable. Please try again.');
   }
 }

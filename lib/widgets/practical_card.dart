@@ -129,10 +129,11 @@ class _PracticalCardState extends State<PracticalCard> {
           task: 'sentiment',
         );
         final liveAnswer = res.success
-            ? '[REAL NLP ENGINE OUTPUT - GROQ & NLTK]\n'
+            ? '[REAL AI NLP OUTPUT - GROQ / GEMINI]\n'
                 'Task: SENTIMENT ANALYSIS\n'
                 'Predicted Sentiment: ${res.label}\n'
-                'Model Confidence: ${(res.confidence * 100).toInt()}%\n'
+                'Explanation: ${res.explanation}\n'
+                'Model: ${res.model ?? "Groq/Gemini"}\n'
                 'Latency: ${res.executionTimeMs} ms\n'
                 'Status: 200 OK - LIVE INFERENCE'
             : await _fetchLiveRealtimeAiResponse(widget.practical.demoPromptOrCode);

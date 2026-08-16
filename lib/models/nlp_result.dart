@@ -1,10 +1,12 @@
-/// NlpResult stores the structured output from genuine local NLP processing.
+/// NlpResult stores the output from real backend AI NLP processing.
 class NlpResult {
   final bool success;
   final String task; // "sentiment" or "classification"
-  final String label; // e.g. "POSITIVE", "NEGATIVE", "NEUTRAL" or "Education & Academics"
-  final double confidence; // e.g. 0.94
-  final int executionTimeMs;
+  final String label; // e.g. "POSITIVE", "NEGATIVE", "NEUTRAL" or Category Name
+  final String explanation; // Real AI explanation
+  final String? model; // Real AI model returned by backend (e.g. Groq/Gemini)
+  final double? confidence; // Real confidence ONLY if backend returns it; null otherwise
+  final int executionTimeMs; // Actual request duration measured in Flutter
   final Map<String, dynamic>? details;
   final String? errorMessage;
 
@@ -12,19 +14,23 @@ class NlpResult {
     required this.success,
     required this.task,
     required this.label,
-    required this.confidence,
+    required this.explanation,
+    this.model,
+    this.confidence,
     required this.executionTimeMs,
     this.details,
     this.errorMessage,
   });
 
-  factory NlpResult.fromJson(Map<String, dynamic> json) {
+  factory NlpResult.fromJson(Map<String, dynamic> json, {required int latencyMs}) {
     return NlpResult(
-      success: json['success'] as bool? ?? false,
+      success: json['success'] as bool? ?? true,
       task: json['task'] as String? ?? 'sentiment',
-      label: json['label'] as String? ?? 'UNKNOWN',
-      confidence: (json['confidence'] as num?)?.toDouble() ?? 0.0,
-      executionTimeMs: json['executionTimeMs'] as int? ?? 0,
+      label: json['label'] as String? ?? 'AI RESPONSE',
+      explanation: json['explanation'] as String? ?? json['output'] as String? ?? json['response'] as String? ?? '',
+      model: json['model'] as String?,
+      confidence: json['confidence'] != null ? (json['confidence'] as num).toDouble() : null,
+      executionTimeMs: latencyMs,
       details: json['details'] as Map<String, dynamic>?,
       errorMessage: json['error'] as String?,
     );
@@ -35,7 +41,7 @@ class NlpResult {
       success: false,
       task: 'error',
       label: 'ERROR',
-      confidence: 0.0,
+      explanation: '',
       executionTimeMs: 0,
       errorMessage: message,
     );
