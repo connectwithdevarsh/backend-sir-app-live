@@ -194,18 +194,77 @@ def run_practical_1(request: PracticalRequest):
         raise HTTPException(status_code=400, detail="Prompt cannot be empty.")
     return AIService.generate_ai_response(prompt_text)
 
-# Practical 2: Real Local Python NLP Analysis
+# Practical 2: Real AI-Powered NLP Analysis & Text Classification
 @app.post("/api/practical/2/analyze")
 def run_practical_2(request: NLPRequest):
     input_text = request.text.strip()
     if not input_text:
         raise HTTPException(status_code=400, detail="Input text cannot be empty.")
     
-    task = request.task.lower()
+    task = request.task.lower().strip()
     if task == "sentiment":
-        return NLPService.analyze_text(input_text, task="sentiment")
+        prompt = (
+            f"You are an expert NLP Sentiment Analyzer.\n"
+            f"Analyze the sentiment of the following text:\n\n"
+            f"\"{input_text}\"\n\n"
+            f"Provide a structured, clear response in this format:\n"
+            f"Sentiment: [POSITIVE / NEGATIVE / NEUTRAL]\n"
+            f"Explanation: [Short 1-2 sentence explanation of why this sentiment was assigned]"
+        )
+        ai_res = AIService.generate_ai_response(prompt)
+        output_text = ai_res.get("output", "") or ai_res.get("response", "")
+        
+        # Parse label
+        label = "NEUTRAL"
+        upper_out = output_text.upper()
+        if "POSITIVE" in upper_out:
+            label = "POSITIVE"
+        elif "NEGATIVE" in upper_out:
+            label = "NEGATIVE"
+        elif "NEUTRAL" in upper_out:
+            label = "NEUTRAL"
+            
+        return {
+            "success": True,
+            "task": "sentiment",
+            "label": label,
+            "explanation": output_text,
+            "output": output_text,
+            "model": ai_res.get("model", "Groq/Gemini"),
+            "executionTimeMs": ai_res.get("executionTimeMs", 0)
+        }
     elif task in ["classification", "classify"]:
-        return NLPService.classify_text(input_text)
+        prompt = (
+            f"You are an expert NLP Text Classifier.\n"
+            f"Classify the following text into one appropriate category (e.g. Technology & AI, Education & Academics, Business & Finance, Healthcare & Medicine, Customer Support, or General Discussion):\n\n"
+            f"\"{input_text}\"\n\n"
+            f"Provide a structured, clear response in this format:\n"
+            f"Category: [Category Name]\n"
+            f"Explanation: [Short 1-2 sentence explanation of why this text fits the category]"
+        )
+        ai_res = AIService.generate_ai_response(prompt)
+        output_text = ai_res.get("output", "") or ai_res.get("response", "")
+        
+        # Extract Category Name if present
+        label = "Text Classification"
+        for line in output_text.splitlines():
+            if "Category:" in line:
+                label = line.replace("Category:", "").strip()
+                break
+        if label == "Text Classification" and output_text:
+            first_line = output_text.splitlines()[0].replace("**", "").replace("##", "").strip()
+            if first_line:
+                label = first_line
+
+        return {
+            "success": True,
+            "task": "classification",
+            "label": label,
+            "explanation": output_text,
+            "output": output_text,
+            "model": ai_res.get("model", "Groq/Gemini"),
+            "executionTimeMs": ai_res.get("executionTimeMs", 0)
+        }
     else:
         raise HTTPException(status_code=400, detail=f"Invalid NLP task '{request.task}'.")
 
