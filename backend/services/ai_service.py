@@ -417,18 +417,30 @@ class AIService:
     # ========================================================================
     @classmethod
     def generate_ai_response(cls, prompt: str, task_tag: str = "general") -> dict:
-        """Synchronous wrapper for legacy callers."""
+        """Synchronous wrapper safely executable from any thread or running event loop."""
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # In running loop thread, use asyncio.run_coroutine_threadsafe or nest_asyncio logic
-                import nest_asyncio
-                nest_asyncio.apply()
-                return loop.run_until_complete(cls.generate_ai_response_async(prompt, task_tag=task_tag))
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+
+            if loop is not None and loop.is_running():
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(lambda: asyncio.run(cls.generate_ai_response_async(prompt, task_tag=task_tag)))
+                    return future.result()
             else:
-                return loop.run_until_complete(cls.generate_ai_response_async(prompt, task_tag=task_tag))
-        except Exception:
-            return asyncio.run(cls.generate_ai_response_async(prompt, task_tag=task_tag))
+                return asyncio.run(cls.generate_ai_response_async(prompt, task_tag=task_tag))
+        except Exception as e:
+            return {
+                "success": False,
+                "output": f"Execution error: {e}",
+                "response": f"Execution error: {e}",
+                "provider": "error",
+                "model": "none",
+                "executionTimeMs": 0,
+                "error": str(e)
+            }
 
     @classmethod
     async def generate_chat_response_async(cls, messages: List[Dict[str, str]]) -> dict:
@@ -461,13 +473,29 @@ class AIService:
 
     @classmethod
     def generate_chat_response(cls, messages: List[Dict[str, str]]) -> dict:
+        """Synchronous chat wrapper safely executable from any thread or running event loop."""
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                import nest_asyncio
-                nest_asyncio.apply()
-                return loop.run_until_complete(cls.generate_chat_response_async(messages))
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+
+            if loop is not None and loop.is_running():
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(lambda: asyncio.run(cls.generate_chat_response_async(messages)))
+                    return future.result()
             else:
-                return loop.run_until_complete(cls.generate_chat_response_async(messages))
-        except Exception:
-            return asyncio.run(cls.generate_chat_response_async(messages))
+                return asyncio.run(cls.generate_chat_response_async(messages))
+        except Exception as e:
+            return {
+                "success": False,
+                "message": {
+                    "role": "assistant",
+                    "content": f"Chat execution error: {e}"
+                },
+                "model": "none",
+                "provider": "error",
+                "executionTimeMs": 0,
+                "error": str(e)
+            }
