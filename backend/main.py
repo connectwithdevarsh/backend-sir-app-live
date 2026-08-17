@@ -194,15 +194,15 @@ def check_health():
 
 # Practical 1: Direct Generative AI Tool
 @app.post("/api/practical/1/run")
-def run_practical_1(request: PracticalRequest):
+async def run_practical_1(request: PracticalRequest):
     prompt_text = request.prompt.strip()
     if not prompt_text:
         raise HTTPException(status_code=400, detail="Prompt cannot be empty.")
-    return AIService.generate_ai_response(prompt_text)
+    return await AIService.generate_ai_response_async(prompt_text, task_tag="practical_1")
 
 # Practical 2: Real AI-Powered NLP Analysis & Text Classification
 @app.post("/api/practical/2/analyze")
-def run_practical_2(request: NLPRequest):
+async def run_practical_2(request: NLPRequest):
     input_text = request.text.strip()
     if not input_text:
         raise HTTPException(status_code=400, detail="Input text cannot be empty.")
@@ -217,7 +217,7 @@ def run_practical_2(request: NLPRequest):
             f"Sentiment: [POSITIVE / NEGATIVE / NEUTRAL]\n"
             f"Explanation: [Short 1-2 sentence explanation of why this sentiment was assigned]"
         )
-        ai_res = AIService.generate_ai_response(prompt)
+        ai_res = await AIService.generate_ai_response_async(prompt, task_tag="practical_2_sentiment")
         output_text = ai_res.get("output", "") or ai_res.get("response", "")
         
         # Parse label
@@ -231,13 +231,15 @@ def run_practical_2(request: NLPRequest):
             label = "NEUTRAL"
             
         return {
-            "success": True,
+            "success": ai_res.get("success", True),
             "task": "sentiment",
             "label": label,
             "explanation": output_text,
             "output": output_text,
-            "model": ai_res.get("model", "Groq/Gemini"),
-            "executionTimeMs": ai_res.get("executionTimeMs", 0)
+            "model": ai_res.get("model", "Groq/Gemini/NVIDIA"),
+            "provider": ai_res.get("provider", "groq"),
+            "executionTimeMs": ai_res.get("executionTimeMs", 0),
+            "error": ai_res.get("error")
         }
     elif task in ["classification", "classify"]:
         prompt = (
@@ -248,7 +250,7 @@ def run_practical_2(request: NLPRequest):
             f"Category: [Category Name]\n"
             f"Explanation: [Short 1-2 sentence explanation of why this text fits the category]"
         )
-        ai_res = AIService.generate_ai_response(prompt)
+        ai_res = await AIService.generate_ai_response_async(prompt, task_tag="practical_2_classification")
         output_text = ai_res.get("output", "") or ai_res.get("response", "")
         
         # Extract Category Name if present
@@ -263,13 +265,15 @@ def run_practical_2(request: NLPRequest):
                 label = first_line
 
         return {
-            "success": True,
+            "success": ai_res.get("success", True),
             "task": "classification",
             "label": label,
             "explanation": output_text,
             "output": output_text,
-            "model": ai_res.get("model", "Groq/Gemini"),
-            "executionTimeMs": ai_res.get("executionTimeMs", 0)
+            "model": ai_res.get("model", "Groq/Gemini/NVIDIA"),
+            "provider": ai_res.get("provider", "groq"),
+            "executionTimeMs": ai_res.get("executionTimeMs", 0),
+            "error": ai_res.get("error")
         }
     else:
         raise HTTPException(status_code=400, detail=f"Invalid NLP task '{request.task}'.")
