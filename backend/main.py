@@ -172,16 +172,22 @@ def read_root():
 def check_health():
     groq_key = os.getenv("GROQ_API_KEY", "").strip()
     gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
+    nvidia_key = os.getenv("NVIDIA_API_KEY", "").strip()
     
-    active_provider = "none"
+    active_providers = []
     if groq_key and groq_key != "your_groq_api_key_here":
-        active_provider = "groq"
-    elif gemini_key and gemini_key != "your_gemini_api_key_here":
-        active_provider = "gemini"
+        active_providers.append("groq")
+    if gemini_key and gemini_key != "your_gemini_api_key_here":
+        active_providers.append("gemini")
+    if nvidia_key and nvidia_key != "your_nvidia_api_key_here":
+        active_providers.append("nvidia")
+
+    active_provider = active_providers[0] if active_providers else "none"
 
     return {
         "status": "ok",
         "provider": active_provider,
+        "activeProviders": active_providers,
         "vectorStore": "active",
         "serverTime": datetime.now().isoformat()
     }

@@ -12,6 +12,7 @@ class AIService:
         load_dotenv(override=True)
         groq_api_key = os.getenv("GROQ_API_KEY", "").strip()
         gemini_api_key = os.getenv("GEMINI_API_KEY", "").strip()
+        nvidia_api_key = os.getenv("NVIDIA_API_KEY", "").strip()
         
         start_time = time.time()
         
@@ -40,7 +41,7 @@ class AIService:
                         "max_tokens": 1024
                     }
                     
-                    resp = requests.post(url, json=payload, headers=headers, timeout=12)
+                    resp = requests.post(url, json=payload, headers=headers, timeout=10)
                     elapsed_ms = int((time.time() - start_time) * 1000)
                     
                     if resp.status_code == 200:
@@ -52,6 +53,7 @@ class AIService:
                                 "success": True,
                                 "output": text,
                                 "response": text,
+                                "provider": "groq",
                                 "model": f"groq/{model_name}",
                                 "executionTimeMs": elapsed_ms,
                                 "error": None
@@ -76,7 +78,7 @@ class AIService:
                         ]
                     }
                     
-                    resp = requests.post(url, json=payload, headers=headers, timeout=12)
+                    resp = requests.post(url, json=payload, headers=headers, timeout=10)
                     elapsed_ms = int((time.time() - start_time) * 1000)
                     
                     if resp.status_code == 200:
@@ -90,6 +92,7 @@ class AIService:
                                     "success": True,
                                     "output": text,
                                     "response": text,
+                                    "provider": "gemini",
                                     "model": f"google/{model_name}",
                                     "executionTimeMs": elapsed_ms,
                                     "error": None
@@ -97,33 +100,88 @@ class AIService:
                 except Exception:
                     continue
 
+        # 3. Try NVIDIA Nemotron OpenAI-compatible API (Reliable NIM fallback)
+        if nvidia_api_key and nvidia_api_key != "your_nvidia_api_key_here":
+            nvidia_models = [
+                "nvidia/llama-3.1-nemotron-70b-instruct",
+                "meta/llama-3.1-70b-instruct",
+                "nvidia/nemotron-4-340b-instruct"
+            ]
+            for model_name in nvidia_models:
+                try:
+                    url = "https://integrate.api.nvidia.com/v1/chat/completions"
+                    headers = {
+                        "Authorization": f"Bearer {nvidia_api_key}",
+                        "Content-Type": "application/json"
+                    }
+                    payload = {
+                        "model": model_name,
+                        "messages": [
+                            {"role": "system", "content": "You are a helpful educational AI assistant for an Artificial Intelligence laboratory subject."},
+                            {"role": "user", "content": prompt}
+                        ],
+                        "temperature": 0.5,
+                        "max_tokens": 1024
+                    }
+                    
+                    resp = requests.post(url, json=payload, headers=headers, timeout=10)
+                    elapsed_ms = int((time.time() - start_time) * 1000)
+                    
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        choices = data.get("choices", [])
+                        if choices and "message" in choices[0]:
+                            text = choices[0]["message"].get("content", "")
+                            return {
+                                "success": True,
+                                "output": text,
+                                "response": text,
+                                "provider": "nvidia",
+                                "model": f"nvidia/{model_name}",
+                                "executionTimeMs": elapsed_ms,
+                                "error": None
+                            }
+                except Exception:
+                    continue
+
         elapsed_ms = int((time.time() - start_time) * 1000)
         
-        if not groq_api_key and not gemini_api_key:
+        if not groq_api_key and not gemini_api_key and not nvidia_api_key:
             return {
                 "success": False,
-                "output": "API Key Missing: Please provide a GROQ_API_KEY or GEMINI_API_KEY in backend/.env",
+                "output": "API Key Missing: Please configure GROQ_API_KEY, GEMINI_API_KEY, or NVIDIA_API_KEY on the backend.",
+                "response": "API Key Missing: Please configure GROQ_API_KEY, GEMINI_API_KEY, or NVIDIA_API_KEY on the backend.",
+                "provider": "none",
                 "model": "none",
                 "executionTimeMs": elapsed_ms,
-                "error": "No API keys configured"
+                "error": {
+                    "code": "API_KEY_MISSING",
+                    "message": "No API keys configured"
+                }
             }
         
         return {
             "success": False,
-            "output": "Generative AI Service Error: Both Groq and Gemini services timed out or were busy. Please retry with a shorter prompt.",
+            "output": "All configured AI providers (Groq, Gemini, NVIDIA Nemotron) are temporarily unavailable.",
+            "response": "All configured AI providers (Groq, Gemini, NVIDIA Nemotron) are temporarily unavailable.",
+            "provider": "failed",
             "model": "multi-provider",
             "executionTimeMs": elapsed_ms,
-            "error": "All providers failed"
+            "error": {
+                "code": "AI_PROVIDER_UNAVAILABLE",
+                "message": "All configured AI providers are temporarily unavailable."
+            }
         }
 
     @staticmethod
     def generate_chat_response(messages: List[Dict[str, str]]) -> dict:
         """
-        Executes multi-turn AI chatbot conversations maintaining context history.
+        Executes multi-turn AI chatbot conversations maintaining context history across Groq, Gemini, and NVIDIA.
         """
         load_dotenv(override=True)
         groq_api_key = os.getenv("GROQ_API_KEY", "").strip()
         gemini_api_key = os.getenv("GEMINI_API_KEY", "").strip()
+        nvidia_api_key = os.getenv("NVIDIA_API_KEY", "").strip()
         
         start_time = time.time()
         system_instruction = (
@@ -133,7 +191,6 @@ class AIService:
             "Explain technical concepts in a student-friendly way."
         )
 
-        # Truncate conversation history to last 20 messages for size protection
         recent_messages = messages[-20:] if len(messages) > 20 else messages
 
         # 1. Try Groq AI Chat API
@@ -162,7 +219,7 @@ class AIService:
                         "max_tokens": 1024
                     }
 
-                    resp = requests.post(url, json=payload, headers=headers, timeout=15)
+                    resp = requests.post(url, json=payload, headers=headers, timeout=10)
                     elapsed_ms = int((time.time() - start_time) * 1000)
 
                     if resp.status_code == 200:
@@ -207,7 +264,7 @@ class AIService:
                         }
                     }
 
-                    resp = requests.post(url, json=payload, headers=headers, timeout=15)
+                    resp = requests.post(url, json=payload, headers=headers, timeout=10)
                     elapsed_ms = int((time.time() - start_time) * 1000)
 
                     if resp.status_code == 200:
@@ -231,29 +288,83 @@ class AIService:
                 except Exception:
                     continue
 
+        # 3. Try NVIDIA Nemotron OpenAI-compatible Chat API
+        if nvidia_api_key and nvidia_api_key != "your_nvidia_api_key_here":
+            nvidia_models = ["nvidia/llama-3.1-nemotron-70b-instruct", "meta/llama-3.1-70b-instruct"]
+            for model_name in nvidia_models:
+                try:
+                    url = "https://integrate.api.nvidia.com/v1/chat/completions"
+                    headers = {
+                        "Authorization": f"Bearer {nvidia_api_key}",
+                        "Content-Type": "application/json"
+                    }
+                    
+                    formatted_msgs = [{"role": "system", "content": system_instruction}]
+                    for msg in recent_messages:
+                        role = "assistant" if msg.get("role") in ["assistant", "ai", "model"] else "user"
+                        formatted_msgs.append({
+                            "role": role,
+                            "content": msg.get("content", "").strip()
+                        })
+
+                    payload = {
+                        "model": model_name,
+                        "messages": formatted_msgs,
+                        "temperature": 0.5,
+                        "max_tokens": 1024
+                    }
+
+                    resp = requests.post(url, json=payload, headers=headers, timeout=10)
+                    elapsed_ms = int((time.time() - start_time) * 1000)
+
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        choices = data.get("choices", [])
+                        if choices and "message" in choices[0]:
+                            content = choices[0]["message"].get("content", "")
+                            return {
+                                "success": True,
+                                "message": {
+                                    "role": "assistant",
+                                    "content": content
+                                },
+                                "model": f"nvidia/{model_name}",
+                                "provider": "nvidia",
+                                "executionTimeMs": elapsed_ms,
+                                "error": None
+                            }
+                except Exception:
+                    continue
+
         elapsed_ms = int((time.time() - start_time) * 1000)
 
-        if not groq_api_key and not gemini_api_key:
+        if not groq_api_key and not gemini_api_key and not nvidia_api_key:
             return {
                 "success": False,
                 "message": {
                     "role": "assistant",
-                    "content": "API Key Missing: Please set GROQ_API_KEY or GEMINI_API_KEY in backend/.env"
+                    "content": "API Key Missing: Please configure GROQ_API_KEY, GEMINI_API_KEY, or NVIDIA_API_KEY on backend."
                 },
                 "model": "none",
                 "provider": "none",
                 "executionTimeMs": elapsed_ms,
-                "error": "No API keys configured"
+                "error": {
+                    "code": "API_KEY_MISSING",
+                    "message": "No API keys configured"
+                }
             }
 
         return {
             "success": False,
             "message": {
                 "role": "assistant",
-                "content": "Unable to connect to AI Chat service. Backend providers timed out or were busy."
+                "content": "All configured AI providers (Groq, Gemini, NVIDIA Nemotron) are temporarily unavailable."
             },
             "model": "multi-provider",
             "provider": "failed",
             "executionTimeMs": elapsed_ms,
-            "error": "All AI providers failed"
+            "error": {
+                "code": "AI_PROVIDER_UNAVAILABLE",
+                "message": "All configured AI providers are temporarily unavailable."
+            }
         }
