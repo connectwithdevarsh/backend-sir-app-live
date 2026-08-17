@@ -15,7 +15,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("AIPE_AI_SERVICE")
 
 # ============================================================================
-# PRODUCTION CONCURRENCY, QUEUE & CACHE CONFIGURATION
+# PRODUCTION CONCURRENCY, QUEUE & MODEL CONFIGURATION
 # ============================================================================
 def _get_env_int(key: str, default: int) -> int:
     try:
@@ -23,6 +23,10 @@ def _get_env_int(key: str, default: int) -> int:
         return int(val) if val else default
     except Exception:
         return default
+
+def _get_env_str(key: str, default: str) -> str:
+    val = os.getenv(key, "").strip()
+    return val if val else default
 
 MAX_AI_CONCURRENCY = _get_env_int("MAX_AI_CONCURRENCY", 5)
 AI_QUEUE_TIMEOUT = _get_env_int("AI_QUEUE_TIMEOUT", 90)
@@ -42,25 +46,29 @@ def _get_http_client() -> httpx.AsyncClient:
     global _async_http_client
     if _async_http_client is None or _async_http_client.is_closed:
         limits = httpx.Limits(max_keepalive_connections=20, max_connections=50)
-        _async_http_client = httpx.AsyncClient(limits=limits, timeout=15.0)
+        _async_http_client = httpx.AsyncClient(limits=limits, timeout=8.0)
     return _async_http_client
 
 _response_cache: Dict[str, tuple[dict, float]] = {}
 _in_flight_futures: Dict[str, asyncio.Future] = {}
 
 # ============================================================================
-# PROVIDER CIRCUIT BREAKER & HEALTH TRACKING
+# PROVIDER CIRCUIT BREAKER & ERROR CLASSIFICATION
 # ============================================================================
 class ProviderCircuitBreaker:
     def __init__(self, name: str, cooldown_seconds: float = 30.0):
         self.name = name
-        self.state = "HEALTHY"
+        self.state = "HEALTHY"  # "HEALTHY", "CONFIG_ERROR", "DEGRADED", "OPEN"
         self.consecutive_failures = 0
         self.cooldown_until = 0.0
         self.cooldown_seconds = cooldown_seconds
         self.last_error_reason = "none"
 
     def is_available(self) -> bool:
+        # Permanent configuration errors (401, 403, 404 model not found) skip immediately
+        if self.state == "CONFIG_ERROR":
+            return False
+
         now = time.time()
         if self.state == "OPEN":
             if now >= self.cooldown_until:
@@ -74,21 +82,18 @@ class ProviderCircuitBreaker:
         self.state = "HEALTHY"
         self.last_error_reason = "healthy"
 
-    def record_failure(self, reason: str, is_rate_limit: bool = False):
+    def record_permanent_config_error(self, reason: str):
+        self.state = "CONFIG_ERROR"
         self.last_error_reason = reason
-        # Only trip circuit breaker on persistent rate limits or 5+ network failures
-        if is_rate_limit:
-            self.consecutive_failures += 1
-            if self.consecutive_failures >= 3:
-                self.state = "OPEN"
-                self.cooldown_until = time.time() + self.cooldown_seconds
-                logger.warning(f"[{self.name.upper()}] Circuit breaker TRIPPED to OPEN for {self.cooldown_seconds}s due to: {reason}")
-        else:
-            self.consecutive_failures += 1
-            if self.consecutive_failures >= 5:
-                self.state = "OPEN"
-                self.cooldown_until = time.time() + self.cooldown_seconds
-                logger.warning(f"[{self.name.upper()}] Circuit breaker TRIPPED to OPEN for {self.cooldown_seconds}s due to: {reason}")
+        logger.error(f"[{self.name.upper()}] Permanent Configuration Error ({reason}). Provider SKIPPED for all requests.")
+
+    def record_temporary_failure(self, reason: str, is_rate_limit: bool = False):
+        self.last_error_reason = reason
+        self.consecutive_failures += 1
+        if is_rate_limit or self.consecutive_failures >= 3:
+            self.state = "OPEN"
+            self.cooldown_until = time.time() + self.cooldown_seconds
+            logger.warning(f"[{self.name.upper()}] Temporary failure ({reason}). Circuit breaker OPEN for {self.cooldown_seconds}s.")
 
 _circuit_breakers = {
     "groq": ProviderCircuitBreaker("groq"),
@@ -108,39 +113,41 @@ class AIService:
     @classmethod
     async def get_provider_health_summary(cls) -> dict:
         """
-        Diagnostic helper for GET /api/ai/health endpoint.
-        Safely tests each provider with a micro-prompt without exposing keys.
+        Diagnostic helper for GET /api/ai/health.
+        Safely tests each provider configuration without exposing API keys.
         """
         load_dotenv(override=True)
         groq_api_key = os.getenv("GROQ_API_KEY", "").strip()
         gemini_api_key = os.getenv("GEMINI_API_KEY", "").strip()
         nvidia_api_key = os.getenv("NVIDIA_API_KEY", "").strip()
-        client = _get_http_client()
 
+        groq_model = _get_env_str("GROQ_MODEL", "llama-3.1-8b-instant")
+        gemini_model = _get_env_str("GEMINI_MODEL", "gemini-flash-latest")
+        nvidia_model = _get_env_str("NVIDIA_MODEL", "meta/llama-3.1-8b-instruct")
+
+        client = _get_http_client()
         summary = {}
 
-        # 1. Test Groq
+        # 1. Groq Health
         if not groq_api_key or groq_api_key == "your_groq_api_key_here":
-            summary["groq"] = {"configured": False, "status": "not_configured"}
+            summary["groq"] = {"configured": False, "model": groq_model, "status": "not_configured"}
         else:
-            ok, msg, _, _ = await cls._try_groq_request(client, groq_api_key, "llama-3.3-70b-versatile", "Hi")
-            if not ok:
-                ok, msg, _, _ = await cls._try_groq_request(client, groq_api_key, "llama-3.1-8b-instant", "Hi")
-            summary["groq"] = {"configured": True, "status": "healthy" if ok else msg}
+            ok, msg, _, _ = await cls._try_groq_request(client, groq_api_key, groq_model, "Hi")
+            summary["groq"] = {"configured": True, "model": groq_model, "status": "healthy" if ok else msg}
 
-        # 2. Test Gemini
+        # 2. Gemini Health
         if not gemini_api_key or gemini_api_key == "your_gemini_api_key_here":
-            summary["gemini"] = {"configured": False, "status": "not_configured"}
+            summary["gemini"] = {"configured": False, "model": gemini_model, "status": "not_configured"}
         else:
-            ok, msg, _, _ = await cls._try_gemini_request(client, gemini_api_key, "gemini-1.5-flash", "Hi")
-            summary["gemini"] = {"configured": True, "status": "healthy" if ok else msg}
+            ok, msg, _, _ = await cls._try_gemini_request(client, gemini_api_key, gemini_model, "Hi")
+            summary["gemini"] = {"configured": True, "model": gemini_model, "status": "healthy" if ok else msg}
 
-        # 3. Test NVIDIA
+        # 3. NVIDIA Health
         if not nvidia_api_key or nvidia_api_key == "your_nvidia_api_key_here":
-            summary["nvidia"] = {"configured": False, "status": "not_configured"}
+            summary["nvidia"] = {"configured": False, "model": nvidia_model, "status": "not_configured"}
         else:
-            ok, msg, _, _ = await cls._try_nvidia_request(client, nvidia_api_key, "meta/llama-3.1-8b-instruct", "Hi")
-            summary["nvidia"] = {"configured": True, "status": "healthy" if ok else msg}
+            ok, msg, _, _ = await cls._try_nvidia_request(client, nvidia_api_key, nvidia_model, "Hi")
+            summary["nvidia"] = {"configured": True, "model": nvidia_model, "status": "healthy" if ok else msg}
 
         return summary
 
@@ -148,7 +155,8 @@ class AIService:
     async def generate_ai_response_async(cls, prompt: str, task_tag: str = "general") -> dict:
         """
         Production-grade async AI generator.
-        Order: Groq -> Gemini -> NVIDIA (meta/llama-3.1-8b-instruct / meta/llama-3.1-70b-instruct).
+        Order: Groq -> Gemini -> NVIDIA.
+        Instantly skips permanently misconfigured providers (404/401/403) and routes to healthy providers.
         """
         load_dotenv(override=True)
         start_time = time.time()
@@ -226,6 +234,10 @@ class AIService:
         gemini_api_key = os.getenv("GEMINI_API_KEY", "").strip()
         nvidia_api_key = os.getenv("NVIDIA_API_KEY", "").strip()
 
+        groq_model = _get_env_str("GROQ_MODEL", "llama-3.1-8b-instant")
+        gemini_model = _get_env_str("GEMINI_MODEL", "gemini-flash-latest")
+        nvidia_model = _get_env_str("NVIDIA_MODEL", "meta/llama-3.1-8b-instruct")
+
         client = _get_http_client()
         failure_log = []
 
@@ -234,90 +246,99 @@ class AIService:
         # --------------------------------------------------------------------
         cb_groq = _circuit_breakers["groq"]
         if groq_api_key and groq_api_key != "your_groq_api_key_here" and cb_groq.is_available():
-            groq_models = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
-            for model_name in groq_models:
+            groq_models = [groq_model, "llama-3.3-70b-versatile"]
+            for m_name in groq_models:
                 success, data, is_rate_limit, is_permanent = await cls._try_groq_request(
-                    client, groq_api_key, model_name, prompt
+                    client, groq_api_key, m_name, prompt
                 )
                 if success:
                     cb_groq.record_success()
                     elapsed_ms = int((time.time() - start_time) * 1000)
-                    logger.info(f"[GROQ SUCCESS] Model: groq/{model_name} in {elapsed_ms}ms")
+                    logger.info(f"[GROQ SUCCESS] Model: groq/{m_name} in {elapsed_ms}ms")
                     return {
                         "success": True,
                         "output": data,
                         "response": data,
                         "provider": "groq",
-                        "model": f"groq/{model_name}",
+                        "model": f"groq/{m_name}",
                         "executionTimeMs": elapsed_ms,
                         "error": None
                     }
                 else:
-                    failure_log.append(f"Groq ({model_name}): {data}")
-                    cb_groq.record_failure(data, is_rate_limit=is_rate_limit)
+                    failure_log.append(f"Groq ({m_name}): {data}")
+                    if is_permanent:
+                        cb_groq.record_permanent_config_error(data)
+                        break
+                    else:
+                        cb_groq.record_temporary_failure(data, is_rate_limit=is_rate_limit)
 
         # --------------------------------------------------------------------
         # PROVIDER 2: Google Gemini API
         # --------------------------------------------------------------------
         cb_gemini = _circuit_breakers["gemini"]
         if gemini_api_key and gemini_api_key != "your_gemini_api_key_here" and cb_gemini.is_available():
-            gemini_models = ["gemini-1.5-flash", "gemini-flash-latest"]
-            for model_name in gemini_models:
+            gemini_models = [gemini_model, "gemini-1.5-flash"]
+            for m_name in gemini_models:
                 success, data, is_rate_limit, is_permanent = await cls._try_gemini_request(
-                    client, gemini_api_key, model_name, prompt
+                    client, gemini_api_key, m_name, prompt
                 )
                 if success:
                     cb_gemini.record_success()
                     elapsed_ms = int((time.time() - start_time) * 1000)
-                    logger.info(f"[GEMINI SUCCESS] Model: google/{model_name} in {elapsed_ms}ms")
+                    logger.info(f"[GEMINI SUCCESS] Model: google/{m_name} in {elapsed_ms}ms")
                     return {
                         "success": True,
                         "output": data,
                         "response": data,
                         "provider": "gemini",
-                        "model": f"google/{model_name}",
+                        "model": f"google/{m_name}",
                         "executionTimeMs": elapsed_ms,
                         "error": None
                     }
                 else:
-                    failure_log.append(f"Gemini ({model_name}): {data}")
-                    cb_gemini.record_failure(data, is_rate_limit=is_rate_limit)
+                    failure_log.append(f"Gemini ({m_name}): {data}")
+                    if is_permanent:
+                        cb_gemini.record_permanent_config_error(data)
+                        break
+                    else:
+                        cb_gemini.record_temporary_failure(data, is_rate_limit=is_rate_limit)
 
         # --------------------------------------------------------------------
         # PROVIDER 3: NVIDIA NIM API (Active models: meta/llama-3.1-8b-instruct, meta/llama-3.1-70b-instruct)
         # --------------------------------------------------------------------
         cb_nvidia = _circuit_breakers["nvidia"]
         if nvidia_api_key and nvidia_api_key != "your_nvidia_api_key_here" and cb_nvidia.is_available():
-            nvidia_models = [
-                "meta/llama-3.1-8b-instruct",
-                "meta/llama-3.1-70b-instruct"
-            ]
-            for model_name in nvidia_models:
+            nvidia_models = [nvidia_model, "meta/llama-3.1-70b-instruct"]
+            for m_name in nvidia_models:
                 success, data, is_rate_limit, is_permanent = await cls._try_nvidia_request(
-                    client, nvidia_api_key, model_name, prompt
+                    client, nvidia_api_key, m_name, prompt
                 )
                 if success:
                     cb_nvidia.record_success()
                     elapsed_ms = int((time.time() - start_time) * 1000)
-                    logger.info(f"[NVIDIA SUCCESS] Model: nvidia/{model_name} in {elapsed_ms}ms")
+                    logger.info(f"[NVIDIA SUCCESS] Model: nvidia/{m_name} in {elapsed_ms}ms")
                     return {
                         "success": True,
                         "output": data,
                         "response": data,
                         "provider": "nvidia",
-                        "model": f"nvidia/{model_name}",
+                        "model": f"nvidia/{m_name}",
                         "executionTimeMs": elapsed_ms,
                         "error": None
                     }
                 else:
-                    failure_log.append(f"NVIDIA ({model_name}): {data}")
-                    cb_nvidia.record_failure(data, is_rate_limit=is_rate_limit)
+                    failure_log.append(f"NVIDIA ({m_name}): {data}")
+                    if is_permanent:
+                        cb_nvidia.record_permanent_config_error(data)
+                        break
+                    else:
+                        cb_nvidia.record_temporary_failure(data, is_rate_limit=is_rate_limit)
 
         # --------------------------------------------------------------------
         # ALL PROVIDERS FAILED OR UNCONFIGURED
         # --------------------------------------------------------------------
         elapsed_ms = int((time.time() - start_time) * 1000)
-        logger.error(f"[ALL PROVIDERS FAILED] Summary: { ' | '.join(failure_log) }")
+        logger.error(f"[ALL PROVIDERS FAILED] Details: { ' | '.join(failure_log) }")
 
         return {
             "success": False,
@@ -333,7 +354,7 @@ class AIService:
         }
 
     # ========================================================================
-    # PROVIDER HTTP REQUEST HELPERS
+    # PROVIDER HTTP REQUEST HELPERS (SECURE HEADERS & OPTIMIZED MAX TOKENS)
     # ========================================================================
     @staticmethod
     async def _try_groq_request(client: httpx.AsyncClient, api_key: str, model_name: str, prompt: str) -> tuple[bool, str, bool, bool]:
@@ -349,13 +370,13 @@ class AIService:
                 {"role": "user", "content": prompt}
             ],
             "temperature": 0.6,
-            "max_tokens": 1024
+            "max_tokens": 768
         }
 
         max_attempts = 2
         for attempt in range(max_attempts):
             try:
-                resp = await client.post(url, json=payload, headers=headers, timeout=12.0)
+                resp = await client.post(url, json=payload, headers=headers, timeout=8.0)
                 if resp.status_code == 200:
                     data = resp.json()
                     choices = data.get("choices", [])
@@ -372,27 +393,35 @@ class AIService:
                     return False, f"provider_error (HTTP {resp.status_code})", False, False
             except Exception as e:
                 if attempt < max_attempts - 1:
-                    await asyncio.sleep(1.0 + random.uniform(0.1, 0.3))
+                    await asyncio.sleep(0.8 + random.uniform(0.1, 0.3))
                     continue
                 return False, f"timeout/connection_error ({e})", False, False
         return False, "failed", False, False
 
     @staticmethod
     async def _try_gemini_request(client: httpx.AsyncClient, api_key: str, model_name: str, prompt: str) -> tuple[bool, str, bool, bool]:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
-        headers = {"Content-Type": "application/json"}
+        # SECURE AUTHENTICATION: Pass API Key in x-goog-api-key header (NEVER IN URL QUERY STRING)
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
+        headers = {
+            "Content-Type": "application/json",
+            "x-goog-api-key": api_key
+        }
         payload = {
             "contents": [
                 {
                     "parts": [{"text": prompt}]
                 }
-            ]
+            ],
+            "generationConfig": {
+                "maxOutputTokens": 768,
+                "temperature": 0.6
+            }
         }
 
         max_attempts = 2
         for attempt in range(max_attempts):
             try:
-                resp = await client.post(url, json=payload, headers=headers, timeout=12.0)
+                resp = await client.post(url, json=payload, headers=headers, timeout=8.0)
                 if resp.status_code == 200:
                     data = resp.json()
                     candidates = data.get("candidates", [])
@@ -411,7 +440,7 @@ class AIService:
                     return False, f"provider_error (HTTP {resp.status_code})", False, False
             except Exception as e:
                 if attempt < max_attempts - 1:
-                    await asyncio.sleep(1.0 + random.uniform(0.1, 0.3))
+                    await asyncio.sleep(0.8 + random.uniform(0.1, 0.3))
                     continue
                 return False, f"timeout/connection_error ({e})", False, False
         return False, "failed", False, False
@@ -430,13 +459,13 @@ class AIService:
                 {"role": "user", "content": prompt}
             ],
             "temperature": 0.5,
-            "max_tokens": 1024
+            "max_tokens": 768
         }
 
         max_attempts = 2
         for attempt in range(max_attempts):
             try:
-                resp = await client.post(url, json=payload, headers=headers, timeout=12.0)
+                resp = await client.post(url, json=payload, headers=headers, timeout=8.0)
                 if resp.status_code == 200:
                     data = resp.json()
                     choices = data.get("choices", [])
@@ -453,7 +482,7 @@ class AIService:
                     return False, f"provider_error (HTTP {resp.status_code})", False, False
             except Exception as e:
                 if attempt < max_attempts - 1:
-                    await asyncio.sleep(1.0 + random.uniform(0.1, 0.3))
+                    await asyncio.sleep(0.8 + random.uniform(0.1, 0.3))
                     continue
                 return False, f"timeout/connection_error ({e})", False, False
         return False, "failed", False, False
