@@ -4,11 +4,15 @@ import json
 import random
 import asyncio
 import hashlib
+import logging
 from typing import List, Dict, Any, Optional
 from dotenv import load_dotenv
 import httpx
 
 load_dotenv()
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("AIPE_AI_SERVICE")
 
 # ============================================================================
 # PRODUCTION CONCURRENCY, QUEUE & CACHE CONFIGURATION
@@ -24,7 +28,6 @@ MAX_AI_CONCURRENCY = _get_env_int("MAX_AI_CONCURRENCY", 5)
 AI_QUEUE_TIMEOUT = _get_env_int("AI_QUEUE_TIMEOUT", 90)
 CACHE_TTL_SECONDS = _get_env_int("CACHE_TTL_SECONDS", 300)
 
-# Global Semaphore for controlling concurrency across burst requests (30-40 students)
 _concurrency_semaphore: Optional[asyncio.Semaphore] = None
 
 def _get_semaphore() -> asyncio.Semaphore:
@@ -33,32 +36,29 @@ def _get_semaphore() -> asyncio.Semaphore:
         _concurrency_semaphore = asyncio.Semaphore(MAX_AI_CONCURRENCY)
     return _concurrency_semaphore
 
-# Global Shared Async HTTP Client for Connection Pooling
 _async_http_client: Optional[httpx.AsyncClient] = None
 
 def _get_http_client() -> httpx.AsyncClient:
     global _async_http_client
     if _async_http_client is None or _async_http_client.is_closed:
         limits = httpx.Limits(max_keepalive_connections=20, max_connections=50)
-        _async_http_client = httpx.AsyncClient(limits=limits, timeout=12.0)
+        _async_http_client = httpx.AsyncClient(limits=limits, timeout=15.0)
     return _async_http_client
 
-# Short-Lived TTL Response Cache: { cache_key: (response_dict, expire_timestamp) }
 _response_cache: Dict[str, tuple[dict, float]] = {}
-
-# In-flight Request Coalescing: { cache_key: asyncio.Future }
 _in_flight_futures: Dict[str, asyncio.Future] = {}
 
 # ============================================================================
 # PROVIDER CIRCUIT BREAKER & HEALTH TRACKING
 # ============================================================================
 class ProviderCircuitBreaker:
-    def __init__(self, name: str, cooldown_seconds: float = 60.0):
+    def __init__(self, name: str, cooldown_seconds: float = 30.0):
         self.name = name
-        self.state = "HEALTHY"  # "HEALTHY", "DEGRADED", "OPEN"
+        self.state = "HEALTHY"
         self.consecutive_failures = 0
         self.cooldown_until = 0.0
         self.cooldown_seconds = cooldown_seconds
+        self.last_error_reason = "none"
 
     def is_available(self) -> bool:
         now = time.time()
@@ -72,12 +72,23 @@ class ProviderCircuitBreaker:
     def record_success(self):
         self.consecutive_failures = 0
         self.state = "HEALTHY"
+        self.last_error_reason = "healthy"
 
-    def record_failure(self, is_rate_limit: bool = False):
-        self.consecutive_failures += 1
-        if is_rate_limit or self.consecutive_failures >= 3:
-            self.state = "OPEN"
-            self.cooldown_until = time.time() + self.cooldown_seconds
+    def record_failure(self, reason: str, is_rate_limit: bool = False):
+        self.last_error_reason = reason
+        # Only trip circuit breaker on persistent rate limits or 5+ network failures
+        if is_rate_limit:
+            self.consecutive_failures += 1
+            if self.consecutive_failures >= 3:
+                self.state = "OPEN"
+                self.cooldown_until = time.time() + self.cooldown_seconds
+                logger.warning(f"[{self.name.upper()}] Circuit breaker TRIPPED to OPEN for {self.cooldown_seconds}s due to: {reason}")
+        else:
+            self.consecutive_failures += 1
+            if self.consecutive_failures >= 5:
+                self.state = "OPEN"
+                self.cooldown_until = time.time() + self.cooldown_seconds
+                logger.warning(f"[{self.name.upper()}] Circuit breaker TRIPPED to OPEN for {self.cooldown_seconds}s due to: {reason}")
 
 _circuit_breakers = {
     "groq": ProviderCircuitBreaker("groq"),
@@ -95,16 +106,55 @@ class AIService:
         return hashlib.sha256(raw.encode('utf-8')).hexdigest()
 
     @classmethod
+    async def get_provider_health_summary(cls) -> dict:
+        """
+        Diagnostic helper for GET /api/ai/health endpoint.
+        Safely tests each provider with a micro-prompt without exposing keys.
+        """
+        load_dotenv(override=True)
+        groq_api_key = os.getenv("GROQ_API_KEY", "").strip()
+        gemini_api_key = os.getenv("GEMINI_API_KEY", "").strip()
+        nvidia_api_key = os.getenv("NVIDIA_API_KEY", "").strip()
+        client = _get_http_client()
+
+        summary = {}
+
+        # 1. Test Groq
+        if not groq_api_key or groq_api_key == "your_groq_api_key_here":
+            summary["groq"] = {"configured": False, "status": "not_configured"}
+        else:
+            ok, msg, _, _ = await cls._try_groq_request(client, groq_api_key, "llama-3.3-70b-versatile", "Hi")
+            if not ok:
+                ok, msg, _, _ = await cls._try_groq_request(client, groq_api_key, "llama-3.1-8b-instant", "Hi")
+            summary["groq"] = {"configured": True, "status": "healthy" if ok else msg}
+
+        # 2. Test Gemini
+        if not gemini_api_key or gemini_api_key == "your_gemini_api_key_here":
+            summary["gemini"] = {"configured": False, "status": "not_configured"}
+        else:
+            ok, msg, _, _ = await cls._try_gemini_request(client, gemini_api_key, "gemini-1.5-flash", "Hi")
+            summary["gemini"] = {"configured": True, "status": "healthy" if ok else msg}
+
+        # 3. Test NVIDIA
+        if not nvidia_api_key or nvidia_api_key == "your_nvidia_api_key_here":
+            summary["nvidia"] = {"configured": False, "status": "not_configured"}
+        else:
+            ok, msg, _, _ = await cls._try_nvidia_request(client, nvidia_api_key, "meta/llama-3.1-8b-instruct", "Hi")
+            summary["nvidia"] = {"configured": True, "status": "healthy" if ok else msg}
+
+        return summary
+
+    @classmethod
     async def generate_ai_response_async(cls, prompt: str, task_tag: str = "general") -> dict:
         """
-        Production-grade async AI generator designed for 30-40 student burst loads.
-        Includes: Response Cache -> Request Coalescing -> Concurrency Semaphore -> Circuit Breaker -> Provider Router.
+        Production-grade async AI generator.
+        Order: Groq -> Gemini -> NVIDIA (meta/llama-3.1-8b-instruct / meta/llama-3.1-70b-instruct).
         """
         load_dotenv(override=True)
         start_time = time.time()
         cache_key = cls._compute_cache_key(task_tag, prompt)
 
-        # 1. Check TTL Response Cache (5-Minute TTL)
+        # 1. Check TTL Cache
         now = time.time()
         if cache_key in _response_cache:
             cached_resp, expire_time = _response_cache[cache_key]
@@ -116,7 +166,7 @@ class AIService:
             else:
                 del _response_cache[cache_key]
 
-        # 2. Request Coalescing (In-flight deduplication for identical simultaneous student requests)
+        # 2. Request Coalescing
         if cache_key in _in_flight_futures:
             try:
                 shared_result = await asyncio.shield(_in_flight_futures[cache_key])
@@ -127,13 +177,12 @@ class AIService:
             except Exception:
                 pass
 
-        # Register in-flight future for request deduplication
         loop = asyncio.get_running_loop()
         future = loop.create_future()
         _in_flight_futures[cache_key] = future
 
         try:
-            # 3. Server-side Concurrency Semaphore & Queue Control
+            # 3. Semaphore Queue Control
             semaphore = _get_semaphore()
             try:
                 await asyncio.wait_for(semaphore.acquire(), timeout=float(AI_QUEUE_TIMEOUT))
@@ -155,10 +204,9 @@ class AIService:
                 return err_resp
 
             try:
-                # 4. Execute Multi-Provider Fallback Router (Groq -> Gemini -> NVIDIA Nemotron)
+                # 4. Execute Multi-Provider Router
                 res = await cls._execute_provider_router(prompt, start_time)
 
-                # Store in Cache if successful
                 if res.get("success"):
                     _response_cache[cache_key] = (res, time.time() + CACHE_TTL_SECONDS)
 
@@ -179,9 +227,10 @@ class AIService:
         nvidia_api_key = os.getenv("NVIDIA_API_KEY", "").strip()
 
         client = _get_http_client()
+        failure_log = []
 
         # --------------------------------------------------------------------
-        # PROVIDER 1: Groq AI (Ultra-fast LPU inference: ~400ms - 800ms)
+        # PROVIDER 1: Groq AI
         # --------------------------------------------------------------------
         cb_groq = _circuit_breakers["groq"]
         if groq_api_key and groq_api_key != "your_groq_api_key_here" and cb_groq.is_available():
@@ -193,6 +242,7 @@ class AIService:
                 if success:
                     cb_groq.record_success()
                     elapsed_ms = int((time.time() - start_time) * 1000)
+                    logger.info(f"[GROQ SUCCESS] Model: groq/{model_name} in {elapsed_ms}ms")
                     return {
                         "success": True,
                         "output": data,
@@ -203,16 +253,15 @@ class AIService:
                         "error": None
                     }
                 else:
-                    cb_groq.record_failure(is_rate_limit=is_rate_limit)
-                    if is_permanent:
-                        break
+                    failure_log.append(f"Groq ({model_name}): {data}")
+                    cb_groq.record_failure(data, is_rate_limit=is_rate_limit)
 
         # --------------------------------------------------------------------
-        # PROVIDER 2: Google Gemini API (Fast secondary fallback)
+        # PROVIDER 2: Google Gemini API
         # --------------------------------------------------------------------
         cb_gemini = _circuit_breakers["gemini"]
         if gemini_api_key and gemini_api_key != "your_gemini_api_key_here" and cb_gemini.is_available():
-            gemini_models = ["gemini-flash-latest", "gemini-2.5-flash-lite"]
+            gemini_models = ["gemini-1.5-flash", "gemini-flash-latest"]
             for model_name in gemini_models:
                 success, data, is_rate_limit, is_permanent = await cls._try_gemini_request(
                     client, gemini_api_key, model_name, prompt
@@ -220,6 +269,7 @@ class AIService:
                 if success:
                     cb_gemini.record_success()
                     elapsed_ms = int((time.time() - start_time) * 1000)
+                    logger.info(f"[GEMINI SUCCESS] Model: google/{model_name} in {elapsed_ms}ms")
                     return {
                         "success": True,
                         "output": data,
@@ -230,16 +280,18 @@ class AIService:
                         "error": None
                     }
                 else:
-                    cb_gemini.record_failure(is_rate_limit=is_rate_limit)
-                    if is_permanent:
-                        break
+                    failure_log.append(f"Gemini ({model_name}): {data}")
+                    cb_gemini.record_failure(data, is_rate_limit=is_rate_limit)
 
         # --------------------------------------------------------------------
-        # PROVIDER 3: NVIDIA Nemotron OpenAI-compatible API (Reliable NIM tertiary fallback)
+        # PROVIDER 3: NVIDIA NIM API (Active models: meta/llama-3.1-8b-instruct, meta/llama-3.1-70b-instruct)
         # --------------------------------------------------------------------
         cb_nvidia = _circuit_breakers["nvidia"]
         if nvidia_api_key and nvidia_api_key != "your_nvidia_api_key_here" and cb_nvidia.is_available():
-            nvidia_models = ["nvidia/llama-3.1-nemotron-70b-instruct", "meta/llama-3.1-70b-instruct"]
+            nvidia_models = [
+                "meta/llama-3.1-8b-instruct",
+                "meta/llama-3.1-70b-instruct"
+            ]
             for model_name in nvidia_models:
                 success, data, is_rate_limit, is_permanent = await cls._try_nvidia_request(
                     client, nvidia_api_key, model_name, prompt
@@ -247,6 +299,7 @@ class AIService:
                 if success:
                     cb_nvidia.record_success()
                     elapsed_ms = int((time.time() - start_time) * 1000)
+                    logger.info(f"[NVIDIA SUCCESS] Model: nvidia/{model_name} in {elapsed_ms}ms")
                     return {
                         "success": True,
                         "output": data,
@@ -257,43 +310,30 @@ class AIService:
                         "error": None
                     }
                 else:
-                    cb_nvidia.record_failure(is_rate_limit=is_rate_limit)
-                    if is_permanent:
-                        break
+                    failure_log.append(f"NVIDIA ({model_name}): {data}")
+                    cb_nvidia.record_failure(data, is_rate_limit=is_rate_limit)
 
         # --------------------------------------------------------------------
         # ALL PROVIDERS FAILED OR UNCONFIGURED
         # --------------------------------------------------------------------
         elapsed_ms = int((time.time() - start_time) * 1000)
-        if not groq_api_key and not gemini_api_key and not nvidia_api_key:
-            return {
-                "success": False,
-                "output": "API Key Missing: Please configure GROQ_API_KEY, GEMINI_API_KEY, or NVIDIA_API_KEY on the backend environment variables.",
-                "response": "API Key Missing: Please configure GROQ_API_KEY, GEMINI_API_KEY, or NVIDIA_API_KEY on the backend environment variables.",
-                "provider": "none",
-                "model": "none",
-                "executionTimeMs": elapsed_ms,
-                "error": {
-                    "code": "API_KEY_MISSING",
-                    "message": "No API keys configured on backend server."
-                }
-            }
+        logger.error(f"[ALL PROVIDERS FAILED] Summary: { ' | '.join(failure_log) }")
 
         return {
             "success": False,
-            "output": "All configured AI providers (Groq, Gemini, NVIDIA Nemotron) are temporarily unavailable. Please try again in a few seconds.",
-            "response": "All configured AI providers (Groq, Gemini, NVIDIA Nemotron) are temporarily unavailable. Please try again in a few seconds.",
+            "output": "All configured AI providers are temporarily unavailable. Please try again shortly.",
+            "response": "All configured AI providers are temporarily unavailable. Please try again shortly.",
             "provider": "failed",
             "model": "multi-provider",
             "executionTimeMs": elapsed_ms,
             "error": {
                 "code": "AI_PROVIDER_UNAVAILABLE",
-                "message": "All configured AI providers are temporarily unavailable."
+                "message": f"All configured AI providers (Groq, Gemini, NVIDIA) failed. Details: {'; '.join(failure_log)}"
             }
         }
 
     # ========================================================================
-    # PROVIDER HTTP REQUEST HELPERS WITH BACKOFF & JITTER
+    # PROVIDER HTTP REQUEST HELPERS
     # ========================================================================
     @staticmethod
     async def _try_groq_request(client: httpx.AsyncClient, api_key: str, model_name: str, prompt: str) -> tuple[bool, str, bool, bool]:
@@ -315,25 +355,27 @@ class AIService:
         max_attempts = 2
         for attempt in range(max_attempts):
             try:
-                resp = await client.post(url, json=payload, headers=headers, timeout=10.0)
+                resp = await client.post(url, json=payload, headers=headers, timeout=12.0)
                 if resp.status_code == 200:
                     data = resp.json()
                     choices = data.get("choices", [])
                     if choices and "message" in choices[0]:
                         return True, choices[0]["message"].get("content", ""), False, False
                 elif resp.status_code in [401, 403, 404, 422]:
-                    return False, f"HTTP {resp.status_code}", False, True
+                    return False, f"invalid_model/auth_failed (HTTP {resp.status_code})", False, True
                 elif resp.status_code == 429:
                     if attempt < max_attempts - 1:
-                        backoff = (2 ** attempt) + random.uniform(0.1, 0.5)
-                        await asyncio.sleep(backoff)
+                        await asyncio.sleep(1.0 + random.uniform(0.1, 0.4))
                         continue
-                    return False, "Rate Limited", True, False
-            except Exception:
+                    return False, "rate_limited (HTTP 429)", True, False
+                else:
+                    return False, f"provider_error (HTTP {resp.status_code})", False, False
+            except Exception as e:
                 if attempt < max_attempts - 1:
                     await asyncio.sleep(1.0 + random.uniform(0.1, 0.3))
                     continue
-        return False, "Failed", False, False
+                return False, f"timeout/connection_error ({e})", False, False
+        return False, "failed", False, False
 
     @staticmethod
     async def _try_gemini_request(client: httpx.AsyncClient, api_key: str, model_name: str, prompt: str) -> tuple[bool, str, bool, bool]:
@@ -350,7 +392,7 @@ class AIService:
         max_attempts = 2
         for attempt in range(max_attempts):
             try:
-                resp = await client.post(url, json=payload, headers=headers, timeout=10.0)
+                resp = await client.post(url, json=payload, headers=headers, timeout=12.0)
                 if resp.status_code == 200:
                     data = resp.json()
                     candidates = data.get("candidates", [])
@@ -359,18 +401,20 @@ class AIService:
                         if parts and "text" in parts[0]:
                             return True, parts[0]["text"], False, False
                 elif resp.status_code in [400, 401, 403, 404]:
-                    return False, f"HTTP {resp.status_code}", False, True
-                elif resp.status_code == 429:
+                    return False, f"invalid_model/auth_failed (HTTP {resp.status_code})", False, True
+                elif resp.status_code in [429, 503]:
                     if attempt < max_attempts - 1:
-                        backoff = (2 ** attempt) + random.uniform(0.1, 0.5)
-                        await asyncio.sleep(backoff)
+                        await asyncio.sleep(1.0 + random.uniform(0.1, 0.4))
                         continue
-                    return False, "Rate Limited", True, False
-            except Exception:
+                    return False, f"rate_limited/high_demand (HTTP {resp.status_code})", True, False
+                else:
+                    return False, f"provider_error (HTTP {resp.status_code})", False, False
+            except Exception as e:
                 if attempt < max_attempts - 1:
                     await asyncio.sleep(1.0 + random.uniform(0.1, 0.3))
                     continue
-        return False, "Failed", False, False
+                return False, f"timeout/connection_error ({e})", False, False
+        return False, "failed", False, False
 
     @staticmethod
     async def _try_nvidia_request(client: httpx.AsyncClient, api_key: str, model_name: str, prompt: str) -> tuple[bool, str, bool, bool]:
@@ -392,32 +436,33 @@ class AIService:
         max_attempts = 2
         for attempt in range(max_attempts):
             try:
-                resp = await client.post(url, json=payload, headers=headers, timeout=10.0)
+                resp = await client.post(url, json=payload, headers=headers, timeout=12.0)
                 if resp.status_code == 200:
                     data = resp.json()
                     choices = data.get("choices", [])
                     if choices and "message" in choices[0]:
                         return True, choices[0]["message"].get("content", ""), False, False
                 elif resp.status_code in [401, 403, 404, 422]:
-                    return False, f"HTTP {resp.status_code}", False, True
+                    return False, f"invalid_model/auth_failed (HTTP {resp.status_code})", False, True
                 elif resp.status_code == 429:
                     if attempt < max_attempts - 1:
-                        backoff = (2 ** attempt) + random.uniform(0.1, 0.5)
-                        await asyncio.sleep(backoff)
+                        await asyncio.sleep(1.0 + random.uniform(0.1, 0.4))
                         continue
-                    return False, "Rate Limited", True, False
-            except Exception:
+                    return False, "rate_limited (HTTP 429)", True, False
+                else:
+                    return False, f"provider_error (HTTP {resp.status_code})", False, False
+            except Exception as e:
                 if attempt < max_attempts - 1:
                     await asyncio.sleep(1.0 + random.uniform(0.1, 0.3))
                     continue
-        return False, "Failed", False, False
+                return False, f"timeout/connection_error ({e})", False, False
+        return False, "failed", False, False
 
     # ========================================================================
     # SYNCHRONOUS WRAPPERS FOR COMPATIBILITY
     # ========================================================================
     @classmethod
     def generate_ai_response(cls, prompt: str, task_tag: str = "general") -> dict:
-        """Synchronous wrapper safely executable from any thread or running event loop."""
         try:
             try:
                 loop = asyncio.get_running_loop()
@@ -444,7 +489,6 @@ class AIService:
 
     @classmethod
     async def generate_chat_response_async(cls, messages: List[Dict[str, str]]) -> dict:
-        """Multi-turn chat completion with full concurrency control and provider router."""
         prompt_summary = "\n".join([f"{m.get('role')}: {m.get('content')}" for m in messages[-4:]])
         res = await cls.generate_ai_response_async(prompt_summary, task_tag="chat")
         if res.get("success"):
@@ -473,7 +517,6 @@ class AIService:
 
     @classmethod
     def generate_chat_response(cls, messages: List[Dict[str, str]]) -> dict:
-        """Synchronous chat wrapper safely executable from any thread or running event loop."""
         try:
             try:
                 loop = asyncio.get_running_loop()

@@ -192,6 +192,12 @@ def check_health():
         "serverTime": datetime.now().isoformat()
     }
 
+# Step 2: Provider Health Diagnostic Endpoint (Never exposes keys)
+@app.get("/api/ai/health")
+async def check_ai_health():
+    health_summary = await AIService.get_provider_health_summary()
+    return health_summary
+
 # Practical 1: Direct Generative AI Tool
 @app.post("/api/practical/1/run")
 async def run_practical_1(request: PracticalRequest):
